@@ -87,7 +87,68 @@ target_include_directories(robomind-console PRIVATE "${VVOS_ROOT}/src")
 set_target_properties(robomind-console PROPERTIES
     WIN32_EXECUTABLE ON
     OUTPUT_NAME "RoboMindConsole"
+    # 直接产出到 build/dist/，而不是 build/ 根下。
+    #
+    # 原因：`deploy` 是**就地** windeployqt —— 依赖落在 exe 旁边。
+    #   若 exe 在 build/ 根下，而分发目录又是 build/dist/，
+    #   就会出现两份 exe：一份带新代码、一份是上次手动拷过去的旧版，
+    #   用户双击哪份完全看运气，症状是"明明改了却看不到效果"。
+    #   本工程已实际踩到（dist 里那份比 build/ 落后一整个里程碑）。
+    #   把输出目录钉在 dist 后，构建、部署、双击的位置是同一个。
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/dist"
 )
+
+# ---------------------------------------------------------------------------
+# 应用图标：把 assets/app.ico 编进 exe 的资源段
+#
+# 为什么必须有：没有这段资源，RoboMindConsole.exe 在任务栏、Alt-Tab、
+#   资源管理器里一律显示系统默认空白图标。setWindowIcon() 设的是**窗口**图标，
+#   exe 文件本身的图标只认 PE 资源段，两者是两套机制。
+#
+# ⚠️ 为什么不用 enable_language(RC) + target_sources(app.rc)：
+#   MinGW 的 windres 在把 **-I 路径**转交给预处理器 cc1 时**不加引号**。
+#   本工程路径是 "E:/Github Project/..."，含空格，于是 cc1 收到
+#   `-IE:/Github` + `Project/RoboMind-Console/...` 两个碎参数，直接报
+#       cc1.exe: fatal error: Project/RoboMind-Console/...: No such file or directory
+#       windres.exe: preprocessing failed.
+#   这是 CMake RC 规则的已知缺陷，与本工程配置无关。
+#   实测：**完全不给 -I 时 windres 成功**（.rc 里只有 ICON 语句，无需任何
+#   #include），且输入/输出路径含空格也不影响。故这里自建 custom command。
+#   （代价：将来 .rc 若需要 #include，必须换成无空格路径或改用 --preprocessor-arg）
+#
+# 判据（改完必须实测，不能只看"构建成功"）：
+#   windres 失败经常只打印 warning 而不中断链接 —— exe 照样产出、图标静默缺失。
+#   用 `objdump -h <exe> | grep rsrc`（应有 .rsrc 段）或
+#   PowerShell `[System.Drawing.Icon]::ExtractAssociatedIcon(<exe>)` 实际取一次图标来证明。
+# ---------------------------------------------------------------------------
+if(WIN32)
+    get_filename_component(_mingw_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(WINDRES_EXE windres HINTS "${_mingw_bin}" NO_DEFAULT_PATH)
+
+    if(WINDRES_EXE)
+        configure_file(assets/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+        set(_rc_obj "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc.obj")
+
+        add_custom_command(
+            OUTPUT "${_rc_obj}"
+            COMMAND "${WINDRES_EXE}" -O coff
+                    "${CMAKE_CURRENT_BINARY_DIR}/app.rc" "${_rc_obj}"
+            DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/app.rc"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/assets/app.ico"
+            COMMENT "编译图标资源 app.rc → app_icon.rc.obj"
+            VERBATIM
+        )
+        # EXTERNAL_OBJECT：告诉 CMake 这是**已编译好**的对象文件，
+        # 直接进链接行，不要试图用 CXX 规则再编一遍。
+        set_source_files_properties("${_rc_obj}" PROPERTIES
+            EXTERNAL_OBJECT TRUE
+            GENERATED TRUE
+        )
+        target_sources(robomind-console PRIVATE "${_rc_obj}")
+    else()
+        message(WARNING "未找到 windres，exe 将没有图标；检查 MinGW 工具链是否完整")
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # 部署目标：把 Qt 运行时依赖复制到 exe 旁边，让产物**不依赖 PATH** 也能双击运行

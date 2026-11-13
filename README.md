@@ -132,7 +132,7 @@ README 顶部记录的 `13c46b0` 是我们验证过的基线 —— 升级 VVOS 
 **诊断方法：查进程的 `MainWindowHandle`，不是先查 QML 代码。**
 
 ```powershell
-$p = Start-Process .\RoboMindConsole.exe -PassThru
+$p = Start-Process .\build\dist\RoboMindConsole.exe -PassThru
 Start-Sleep 5; $p.Refresh()
 "handle=$($p.MainWindowHandle)  title=[$($p.MainWindowTitle)]"
 # handle=0 ⇒ 平台插件没加载（缺 qwindows.dll，或 PATH/部署目录不对）
@@ -142,16 +142,24 @@ Start-Sleep 5; $p.Refresh()
 
 ```bash
 export PATH="D:/Qt/6.10.3/mingw_64/bin:$PATH"
-./build/RoboMindConsole.exe
+./build/dist/RoboMindConsole.exe
 ```
 
 ### 方式二：分发版（不依赖 PATH）
 
 ```bash
-./build/RoboMindConsole.exe          # 已由 `cmake --build build --target deploy` 部署
+./build/dist/RoboMindConsole.exe          # 已由 `cmake --build build --target deploy` 部署
 ```
 
-`build/dist/` 由 `windeployqt` 生成，自带 Qt DLL 与平台插件，**可在没装 Qt 的机器上双击运行**。
+`deploy` 是**就地部署**：Qt DLL 与平台插件直接落在 exe 旁边（`build/dist/`），所以
+`build/dist/RoboMindConsole.exe` 整个目录拷走就能跑，**可在没装 Qt 的机器上双击运行**。
+
+> **为什么 GUI 产物在 `dist/` 而不是 `build/` 根下**：`CMakeLists.txt` 给
+> `robomind-console` 钉了 `RUNTIME_OUTPUT_DIRECTORY = build/dist`。
+> 曾经 exe 在 `build/` 根、分发目录又是 `build/dist/`，于是同时存在两份：
+> 一份带动新代码、一份是上次手动拷过去的旧版，**双击到哪份全看运气**，
+> 症状是"明明改了却看不到效果"（本项目实际踩过：dist 里那份落后一整个里程碑）。
+> 三个控制台程序（`selfcheck` / `framecheck` / `robomind-headless`）仍在 `build/` 根下。
 
 ### 打分发版
 
@@ -160,7 +168,7 @@ cmake --build build --target deploy
 ```
 
 `deploy` 是 CMake 自定义目标，内部调用 `windeployqt`（路径从 `Qt6::qmake` 反推，不写死），
-把 Qt 运行时依赖复制到 exe 旁边。**部署完 `build/RoboMindConsole.exe` 即可在无 Qt 的机器上双击运行。**
+把 Qt 运行时依赖复制到 exe 旁边。**部署完 `build/dist/RoboMindConsole.exe` 即可在无 Qt 的机器上双击运行。**
 
 > **为什么做成 CMake 目标而不是"记得手动跑"**：手动步骤会退化成"每次都要记得"，
 > 而忘跑的症状是"双击没反应"，且和 UI 代码缺陷长得一模一样。做成目标后它跟着构建走。
@@ -170,11 +178,11 @@ cmake --build build --target deploy
 
 ```bash
 D:/Qt/6.10.3/mingw_64/bin/windeployqt.exe --release --no-translations \
-  build/RoboMindConsole.exe
+  build/dist/RoboMindConsole.exe
 ```
 
 ⚠️ 若用 `--dir <新目录>` 指定输出目录，`windeployqt` **只复制依赖、不复制 exe 本身**，
-必须手动 `cp build/RoboMindConsole.exe <新目录>/`。就地部署（如上）没有这个问题。
+必须手动 `cp build/dist/RoboMindConsole.exe <新目录>/`。就地部署（如上）没有这个问题。
 </details>
 
 **验收分发版必须在"PATH 里没有 Qt"的环境里做** —— 在装了 Qt 的机器上测，等于没测。
@@ -182,7 +190,7 @@ D:/Qt/6.10.3/mingw_64/bin/windeployqt.exe --release --no-translations \
 
 ```powershell
 $env:PATH = "C:\Windows\System32;C:\Windows"
-Start-Process .\build\RoboMindConsole.exe -PassThru |
+Start-Process .\build\dist\RoboMindConsole.exe -PassThru |
   ForEach-Object { Start-Sleep 5; $_.Refresh(); "handle=$($_.MainWindowHandle)" }
 # handle 非 0 ⇒ 自包含成立
 ```
@@ -208,14 +216,14 @@ echo $?          # 0 = 全部通过；非 0 = 有失败项
 ### GUI 壳
 
 ```bash
-./build/RoboMindConsole.exe
+./build/dist/RoboMindConsole.exe
 ```
 
 双击运行**不会弹控制台窗口**（PE 子系统 = Windows GUI）。
 这是 `WIN32_EXECUTABLE ON` 的效果，可用下面命令机械验证：
 
 ```bash
-objdump -p build/RoboMindConsole.exe | grep -i ^Subsystem
+objdump -p build/dist/RoboMindConsole.exe | grep -i ^Subsystem
 # 期望：Subsystem  00000002  (Windows GUI)
 ```
 
@@ -236,11 +244,70 @@ GUI 是 `WIN32` 子系统，stdout 默认不接父控制台。若把 `--selfchec
 ```
 .
 ├── CMakeLists.txt
+├── assets/
+│   ├── gen_icon.py     # 图标生成器（纯 Pillow 绘制，无外部位图素材）
+│   ├── app.rc.in       # 资源脚本模板，由 CMake 注入 app.ico 绝对路径
+│   ├── app.ico         # 7 尺寸内嵌（16/24/32/48/64/128/256）
+│   └── icon-*.png      # 各尺寸预览，便于肉眼验收
 ├── src/
-│   ├── main.cpp        # M1：Qt 主窗口 + PPM / Raw 两个占位面板
-│   └── selfcheck.cpp   # M2：6 组向量 + 帧解析器（粘包/半包）
+│   ├── main.cpp        # M1 入口
+│   ├── mainwindow.cpp  # M1：QTcpServer:9000 + 连接三态 + PPM 面板
+│   ├── frame_stream.h  # 流式拆帧（粘包/半包/坏长度头）
+│   ├── headless.cpp    # 无窗口接收端逻辑（供 robomind-headless 复用）
+│   ├── headless_main.cpp
+│   ├── framecheck.cpp  # 用真实 MessageCodec 校验抓包文件
+│   └── selfcheck.cpp   # 6 组向量 + 帧解析器自检
+├── testdata/           # buggy 必失败 / fixed 必通过的对照帧文件
 └── README.md
 ```
+
+---
+
+## 应用图标
+
+图标是**代码画出来的**，不是位图素材：改颜色、改比例重跑一次 `python assets/gen_icon.py` 即可，
+没有"找不到源文件"的问题。
+
+```bash
+python assets/gen_icon.py     # 需要 Pillow
+```
+
+### 两个必须知道的坑
+
+**坑 1：每个尺寸单独绘制，不能让一份大图降采样。**
+v1 版本用 1024 母版缩到 16 px，53 px 的描边缩完只剩 0.83 px —— 低于 1 像素，
+16 px 图标里整只眼睛直接消失。现在 `render(size)` 按尺寸分支：≥48 px 走
+"描边 + 虹膜环 + 瞳孔"，≤32 px 走"实心眼形挖空瞳孔"，小尺寸反而更清楚。
+
+**坑 2：不能用 `enable_language(RC)` + `target_sources(app.rc)`。**
+MinGW 的 `windres` 把 `-I` 路径转交预处理器 `cc1` 时**不加引号**，而本工程路径含空格
+（`E:/Github Project/...`），于是 `cc1` 收到 `-IE:/Github` 和一个孤立的 `Project/...`：
+
+```
+cc1.exe: fatal error: Project/RoboMind-Console/...: No such file or directory
+windres.exe: preprocessing failed.
+```
+
+实测**完全不给 `-I` 时成功**（`.rc` 里只有一条 `ICON` 语句，不需要任何 `#include`），
+所以 CMakeLists 里自建 `add_custom_command` 调 `windres`，并把产物标成
+`EXTERNAL_OBJECT` 直接进链接行。
+
+### 怎么验证图标真的进去了
+
+`windres` 失败经常只打印一行 warning 而**不中断链接** —— exe 照常产出、图标静默缺失，
+"构建成功"完全没有说服力。要实测：
+
+```bash
+objdump -h build/dist/RoboMindConsole.exe | grep rsrc    # 应有 .rsrc 段，约 34 KB
+```
+
+进一步证明可解 PE 资源树，`RT_ICON(3)` 与 `RT_GROUP_ICON(14)` 都应存在 —— 缺
+`RT_GROUP_ICON` 时资源管理器仍显示默认图标（只有 256 单帧能被部分场景接受）。
+
+### 改图标为什么必须重新链接
+
+`.ico` 是**编译进 exe 资源段**的，不是运行时读取的旁挂文件。
+改了 `app.ico` 却只 `windeployqt` 而不重新构建，图标不会变。
 
 ---
 
