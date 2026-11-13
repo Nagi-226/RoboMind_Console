@@ -28,7 +28,7 @@ add_subdirectory("${VVOS_ROOT}" vvos_build)
 # ---------------------------------------------------------------------------
 # Qt
 # ---------------------------------------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 set(CMAKE_AUTOMOC ON)
 
 # ---------------------------------------------------------------------------
@@ -65,9 +65,9 @@ target_include_directories(framecheck PRIVATE "${VVOS_ROOT}/src")
 # WIN32_EXECUTABLE ON ⇒ 生成 GUI 子系统（PE Subsystem = 2），双击不弹控制台。
 # 判据：objdump -p 看 Subsystem 字段，应为 Windows GUI (2)。
 # ---------------------------------------------------------------------------
-add_executable(robomind-console WIN32 src/main.cpp)
+add_executable(robomind-console WIN32 src/main.cpp src/mainwindow.cpp src/mainwindow.h)
 target_link_libraries(robomind-console PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network
     vr_base_framework
 )
 target_include_directories(robomind-console PRIVATE "${VVOS_ROOT}/src")
