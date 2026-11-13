@@ -78,7 +78,7 @@ export PATH="D:/Qt/6.10.3/mingw_64/bin:$PATH"
 ### 方式二：分发版（不依赖 PATH）
 
 ```bash
-./build/dist/RoboMindConsole.exe
+./build/RoboMindConsole.exe          # 已由 `cmake --build build --target deploy` 部署
 ```
 
 `build/dist/` 由 `windeployqt` 生成，自带 Qt DLL 与平台插件，**可在没装 Qt 的机器上双击运行**。
@@ -86,14 +86,36 @@ export PATH="D:/Qt/6.10.3/mingw_64/bin:$PATH"
 ### 打分发版
 
 ```bash
-D:/Qt/6.10.3/mingw_64/bin/windeployqt.exe --release \
-  --dir build/dist build/RoboMindConsole.exe
-
-# ⚠️ windeployqt **只复制依赖，不复制 exe 本身** —— 必须手动补这一步
-cp build/RoboMindConsole.exe build/dist/
+cmake --build build --target deploy
 ```
 
+`deploy` 是 CMake 自定义目标，内部调用 `windeployqt`（路径从 `Qt6::qmake` 反推，不写死），
+把 Qt 运行时依赖复制到 exe 旁边。**部署完 `build/RoboMindConsole.exe` 即可在无 Qt 的机器上双击运行。**
+
+> **为什么做成 CMake 目标而不是"记得手动跑"**：手动步骤会退化成"每次都要记得"，
+> 而忘跑的症状是"双击没反应"，且和 UI 代码缺陷长得一模一样。做成目标后它跟着构建走。
+
+<details>
+<summary>手动方式（deploy 目标不可用时）</summary>
+
+```bash
+D:/Qt/6.10.3/mingw_64/bin/windeployqt.exe --release --no-translations \
+  build/RoboMindConsole.exe
+```
+
+⚠️ 若用 `--dir <新目录>` 指定输出目录，`windeployqt` **只复制依赖、不复制 exe 本身**，
+必须手动 `cp build/RoboMindConsole.exe <新目录>/`。就地部署（如上）没有这个问题。
+</details>
+
 **验收分发版必须在"PATH 里没有 Qt"的环境里做** —— 在装了 Qt 的机器上测，等于没测。
+最直接的做法是把 PATH 缩到最小再启动：
+
+```powershell
+$env:PATH = "C:\Windows\System32;C:\Windows"
+Start-Process .\build\RoboMindConsole.exe -PassThru |
+  ForEach-Object { Start-Sleep 5; $_.Refresh(); "handle=$($_.MainWindowHandle)" }
+# handle 非 0 ⇒ 自包含成立
+```
 
 ### 解码自检（无需板子）
 

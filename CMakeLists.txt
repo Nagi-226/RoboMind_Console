@@ -65,3 +65,32 @@ set_target_properties(robomind-console PROPERTIES
     WIN32_EXECUTABLE ON
     OUTPUT_NAME "RoboMindConsole"
 )
+
+# ---------------------------------------------------------------------------
+# 部署目标：把 Qt 运行时依赖复制到 exe 旁边，让产物**不依赖 PATH** 也能双击运行
+#
+# 为什么要做成 CMake 目标而不是 README 里的手动步骤：
+#   手动步骤会退化成"每次都要记得跑"，而忘跑的症状是"双击没反应、无报错、
+#   进程短暂存在"——极易被误判成 UI 代码缺陷（我们已踩过一次）。
+#
+# windeployqt 不在 PATH 里，路径从 Qt6::qmake 反推，不写死。
+# 就地部署（不加 --dir）：exe 本身已在输出目录，只需补齐依赖。
+#   （注：若改用 --dir <新目录>，windeployqt **不会**复制 exe，需额外拷贝一步）
+# ---------------------------------------------------------------------------
+get_target_property(_qt_qmake Qt6::qmake IMPORTED_LOCATION)
+if(_qt_qmake)
+    get_filename_component(_qt_bin_dir "${_qt_qmake}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin_dir}" NO_DEFAULT_PATH)
+endif()
+
+if(WINDEPLOYQT_EXE)
+    add_custom_target(deploy
+        COMMAND "${WINDEPLOYQT_EXE}" --release --no-translations
+                "$<TARGET_FILE:robomind-console>"
+        DEPENDS robomind-console
+        COMMENT "部署 Qt 运行时依赖到输出目录（部署后不依赖 PATH）"
+        VERBATIM
+    )
+else()
+    message(WARNING "未找到 windeployqt，deploy 目标不可用；分发版需手动部署")
+endif()
