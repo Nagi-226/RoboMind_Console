@@ -1,0 +1,33 @@
+# 构建产物
+build/
+build-*/
+out/
+
+# Qt / CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.autosave
+*.qmlc
+*.jsc
+.qmake.stash
+*.user
+*.user.*
+
+# 编译中间物
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+*.pdb
+*.ilk
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# 其它
+*.log
