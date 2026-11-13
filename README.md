@@ -2,7 +2,8 @@
 
 PC 端调试控制台：接收 RoboMind-S3 板子经 WiFi 推送的 PPM 感知数据并显示。
 
-**当前进度：M1（壳）+ M2（解码）已完成。** 里程碑 M3（TCP 接入 + 面板实际渲染）尚未开始。
+**当前进度：M1（壳）+ M2（解码）+ M3（TCP 接入 + 实时面板）已完成并端到端验收。**
+验收数据：`fps=9.47`、`decode_fail=0`、`partial=0`，断连后 **3.1 秒自动重连**。
 
 ---
 
@@ -13,6 +14,75 @@ PC 端调试控制台：接收 RoboMind-S3 板子经 WiFi 推送的 PPM 感知�
 
 - **不连板子也能验证**：M2 的解码逻辑与 GUI 无关，用 `selfcheck` 单独跑。
   这样"解码对不对"与"链路通不通"是两个独立问题，出故障能立刻定位是哪一段。
+
+---
+
+## 与 RoboMind-S3 的关系
+
+本程序是 **[RoboMind-S3](https://github.com/Nagi-226/RoboMind-S3)** 的配套上位机。
+
+两者是**数据生产方 ↔ 消费方**关系：板子采集与决策，PC 显示。**协议契约是唯一的耦合点** —— 没有共享代码，没有共享构建。
+
+### 数据流
+
+```
+RoboMind-S3（ESP32-S3）                        RoboMind-Console（PC）
+┌──────────────────────────┐                  ┌────────────────────────┐
+│ 摄像头                    │                  │                        │
+│   ↓                      │                  │  QTcpServer :9000      │
+│ ppm_producer             │                  │        ↓               │
+│   ↓ ppm_run() ~105ms/帧  │                  │  frame_stream          │
+│ ppm_semantics_t          │                  │  （流式切帧，处理半包）  │
+│   ↓                      │                  │        ↓               │
+│ wire_codec               │   TCP 9000       │  MessageCodec::Decode  │
+│ 11 字段文本信封 ──────────┼─────────────────►│        ↓               │
+│ [u32 BE 长度] + 文本      │                  │  PpmPanel 实时显示      │
+└──────────────────────────┘                  └────────────────────────┘
+```
+
+### ⚠️ 协议契约的真相源
+
+**板端 `wire_codec.cpp` 是本仓库所用 `MessageCodec`（在 VVOS 里）的独立实现，不是共享代码。**
+
+| 想改什么 | 真相源（改这里） | 必须同步 |
+|---|---|---|
+| **帧格式 / 字段数** | **VVOS 的 `MessageCodec` + wire 规格** | 板端 `wire_codec.cpp` + 本仓库 `testdata/` 基准包 + `framecheck` |
+| 新增 topic | 板端 `wire_codec.cpp` | **本仓库无需改**（未知 topic 落 `RawPanel`） |
+| 新增 payload 字段 | PPM profile 的 `output.fields` | 板端 payload 语法 + 本仓库解析 |
+
+**「副本永远不是真相源」**：改 `wire_codec.cpp` 之前**必须先看 `message_codec.cpp`**，只看规格不够 —— 规格可能滞后于实现（本项目就发生过：规格写 8 字段、实现已支持 11）。
+
+改完必须用 `framecheck` 跑 `testdata/frames_buggy.bin`（应 FAIL）和 `testdata/frames_fixed.bin`（应 PASS），证明检查没被削弱。
+
+### 版本对应
+
+| 本仓库 | 对应板端 | 协议 |
+|---|---|---|
+| `master` @ `c67941a` | RoboMind-S3 `master` @ `98474f5` | 11 字段信封，TCP 9000 |
+
+### 联调（三步，含两个必踩的坑）
+
+**① 板端开启上报**
+
+```
+CONFIG_ROBOMIND_PPM_PRODUCER_ENABLED=y
+CONFIG_ROBOMIND_TCP_CLIENT_ENABLED=y
+CONFIG_ROBOMIND_TCP_CLIENT_HOST="<PC 的 IP>"
+```
+
+**② PC 端放行防火墙** ⚠️ **坑一**
+
+```powershell
+New-NetFirewallRule -DisplayName "RoboMind Console 9000" -Direction Inbound -LocalPort 9000 -Protocol TCP -Action Allow
+```
+
+**不加这条板子连不上**，而现象是"静默无数据" —— 极易误判成代码问题。**先查防火墙，别先怀疑代码。**
+
+> 验证方法：`Test-NetConnection <PC_IP> -Port 9000`，或从**另一台机器**连（**本机 loopback 测不通不代表局域网不通，反之亦然**）。
+
+**③ 起 server，再上电板子**（顺序无所谓，板子有指数退避会自己连回来）
+
+⚠️ **坑二**：用 `Start-Process` 起的 server 会被 PowerShell 会话回收 —— **必须在同一次调用里 `WaitForExit`**，否则跑两分钟就静默消失，且**没有 summary**。
 
 ---
 
