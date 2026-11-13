@@ -41,8 +41,11 @@ set(CMAKE_AUTOMOC ON)
 # ---------------------------------------------------------------------------
 add_executable(selfcheck src/selfcheck.cpp)
 target_link_libraries(selfcheck PRIVATE vr_base_framework)
+# 兜底，正常不需要：VVOS 的 vr_base_framework 已 PUBLIC 导出 include（master 13c46b0 起）。
+# 保留它是为了"哪天 PUBLIC 导出被人误删，至少还能编过"——用 0 成本把故障从编译失败降级。
+# ⚠️ 这不是标准做法，不要复制到别处：正确的做法是依赖目标的 PUBLIC 导出。
 target_include_directories(selfcheck PRIVATE
-    "${VVOS_ROOT}/src"          # 兜底：即使 VVOS 的 PUBLIC 导出失效也能编
+    "${VVOS_ROOT}/src"
 )
 
 # ---------------------------------------------------------------------------
