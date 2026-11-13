@@ -51,6 +51,50 @@ README 顶部记录的 `13c46b0` 是我们验证过的基线 —— 升级 VVOS 
 
 ## 运行
 
+### ⚠️ 已知陷阱：双击"没反应"
+
+若双击 exe 后 **无窗口、无报错、进程却存在一会儿就没了**，99% 是缺
+`platforms/qwindows.dll`（Qt 平台插件）。
+
+**这不是 UI 代码问题。** 它的恶劣之处在于：退出码是 0、没有错误对话框、
+任务管理器里能看到进程 —— 一切"正常"，就是没窗口。
+
+**诊断方法：查进程的 `MainWindowHandle`，不是先查 QML 代码。**
+
+```powershell
+$p = Start-Process .\RoboMindConsole.exe -PassThru
+Start-Sleep 5; $p.Refresh()
+"handle=$($p.MainWindowHandle)  title=[$($p.MainWindowTitle)]"
+# handle=0 ⇒ 平台插件没加载（缺 qwindows.dll，或 PATH/部署目录不对）
+```
+
+### 方式一：从开发环境启动（需要 Qt 在 PATH）
+
+```bash
+export PATH="D:/Qt/6.10.3/mingw_64/bin:$PATH"
+./build/RoboMindConsole.exe
+```
+
+### 方式二：分发版（不依赖 PATH）
+
+```bash
+./build/dist/RoboMindConsole.exe
+```
+
+`build/dist/` 由 `windeployqt` 生成，自带 Qt DLL 与平台插件，**可在没装 Qt 的机器上双击运行**。
+
+### 打分发版
+
+```bash
+D:/Qt/6.10.3/mingw_64/bin/windeployqt.exe --release \
+  --dir build/dist build/RoboMindConsole.exe
+
+# ⚠️ windeployqt **只复制依赖，不复制 exe 本身** —— 必须手动补这一步
+cp build/RoboMindConsole.exe build/dist/
+```
+
+**验收分发版必须在"PATH 里没有 Qt"的环境里做** —— 在装了 Qt 的机器上测，等于没测。
+
 ### 解码自检（无需板子）
 
 ```bash
