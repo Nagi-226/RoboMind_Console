@@ -1,7 +1,8 @@
-// M3 入口：启动 TCP 接收端（默认端口 9000，可用 argv[1] 覆盖）
+// M3 入口：启动 TCP 接收端 GUI（默认端口 9000，argv[1] 可覆盖）
 //
-// 解码与切帧逻辑分别在 selfcheck.cpp / framecheck.cpp / frame_stream.h，
-// 本文件只做启动，不承载业务。
+// headless 验证请用独立目标 robomind-headless（控制台子系统）——
+// GUI 是 WIN32 子系统，stdout 默认不接父控制台，把 --headless 塞进 GUI
+// 会重蹈 M2 的覆辙：输出静默丢失而退出码仍为 0。理由同 selfcheck 独立成目标。
 
 #include <QApplication>
 #include <QString>

@@ -59,6 +59,18 @@ add_executable(framecheck src/framecheck.cpp)
 target_link_libraries(framecheck PRIVATE vr_base_framework)
 target_include_directories(framecheck PRIVATE "${VVOS_ROOT}/src")
 
+
+# ---------------------------------------------------------------------------
+# robomind-headless：无窗口接收端（控制台子系统）
+#
+# 为什么单独一个可执行文件而不是给 GUI 加 --headless：
+#   GUI 是 WIN32 子系统，stdout 默认不接父控制台 —— 塞进去会重蹈 M2 覆辙：
+#   输出静默丢失而退出码仍为 0（"看起来通过"）。理由同 selfcheck。
+# ---------------------------------------------------------------------------
+add_executable(robomind-headless src/headless_main.cpp src/headless.cpp src/headless.h)
+target_link_libraries(robomind-headless PRIVATE Qt6::Core Qt6::Network vr_base_framework)
+target_include_directories(robomind-headless PRIVATE "${VVOS_ROOT}/src")
+
 # ---------------------------------------------------------------------------
 # M1 · GUI 壳
 #
