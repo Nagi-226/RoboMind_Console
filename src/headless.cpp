@@ -8,6 +8,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 
+#include <cstdarg>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -24,10 +25,28 @@ using vr::interconnect::MessageEnvelope;
 
 struct Stats {
     quint64 frames{0};
+    quint64 first_ts{0};
+    quint64 last_ts{0};
+    bool    has_ts{false};
     quint64 decode_fail{0};
     quint64 bytes{0};
     quint64 bad_header{0};
 };
+
+// 日志时间戳前缀：没有它就无法判断"连接发生在第几秒"（本轮诊断绕远的直接原因）
+QElapsedTimer* g_clock = nullptr;
+
+void Log(const char* fmt, ...)
+{
+    const double t = (g_clock != nullptr) ? static_cast<double>(g_clock->elapsed()) / 1000.0 : 0.0;
+    std::printf("[headless] +%.1fs ", t);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(stdout, fmt, ap);
+    va_end(ap);
+    std::printf("\n");
+    std::fflush(stdout);
+}
 
 QString Pick(const QString& payload, const char* key)
 {
@@ -47,13 +66,14 @@ int RunHeadless(const HeadlessOptions& opt)
 {
     QElapsedTimer clock;
     clock.start();
+    g_clock = &clock;
 
     QTcpServer server;
     FrameStream stream;
     Stats st;
     QByteArray chunks;   // 本轮 readyRead 收到的原始字节
 
-    std::printf("[headless] listening on %u\n", static_cast<unsigned>(opt.port));
+    Log("listening on %u", static_cast<unsigned>(opt.port));
     std::fflush(stdout);
 
     if (!server.listen(QHostAddress::AnyIPv4, opt.port)) {
@@ -74,7 +94,7 @@ int RunHeadless(const HeadlessOptions& opt)
             }
             client = s;
             stream.Reset();
-            std::printf("[headless] client connected\n");
+            Log("client connected");
             std::fflush(stdout);
 
             QObject::connect(client, &QTcpSocket::readyRead, [&]() {
@@ -95,12 +115,18 @@ int RunHeadless(const HeadlessOptions& opt)
                         ++st.decode_fail;
                         continue;
                     }
+                    if (!st.has_ts) {
+                        st.first_ts = static_cast<quint64>(env.timestamp_ms);
+                        st.has_ts = true;
+                    }
+                    st.last_ts = static_cast<quint64>(env.timestamp_ms);
                     ++st.frames;
                     if (!opt.quiet) {
                         const QString p = QString::fromStdString(env.payload);
                         std::printf(
-                            "[headless] frame#%llu seq=%llu ts=%llu dv=%s dl=%s ev=%s es=%s "
-                            "ab=%s dg=%s\n",
+                            "[headless] +%.1fs frame#%llu seq=%llu ts=%llu dv=%s dl=%s ev=%s "
+                            "es=%s ab=%s dg=%s\n",
+                            static_cast<double>(clock.elapsed()) / 1000.0,
                             static_cast<unsigned long long>(st.frames),
                             static_cast<unsigned long long>(env.sequence),
                             static_cast<unsigned long long>(env.timestamp_ms),
@@ -113,7 +139,7 @@ int RunHeadless(const HeadlessOptions& opt)
             });
 
             QObject::connect(client, &QTcpSocket::disconnected, [&]() {
-                std::printf("[headless] client disconnected\n");
+                Log("client disconnected");
                 std::fflush(stdout);
                 client->deleteLater();
                 client = nullptr;
@@ -140,12 +166,23 @@ int RunHeadless(const HeadlessOptions& opt)
     app->exec();
 
     const size_t partial = stream.pending();
-    const double elapsed = static_cast<double>(clock.elapsed()) / 1000.0;
-    const double fps = (elapsed > 0.0) ? (static_cast<double>(st.frames) / elapsed) : 0.0;
+    const double window_s = static_cast<double>(clock.elapsed()) / 1000.0;
+    /*
+     * fps 用**首末帧 ts 跨度**算，不是用 window。
+     * 原因（实测）：headless 先启动、板子晚连时，window 里包含了"等连接"的空档，
+     * 用 window 会把 9.5 fps 算成 5.0 fps（300 帧 / 60 s）。
+     * N 帧之间只有 N-1 个间隔，故用 frames-1。
+     */
+    const double span_s = (st.has_ts && st.last_ts > st.first_ts)
+                              ? (static_cast<double>(st.last_ts - st.first_ts) / 1000.0)
+                              : 0.0;
+    const double fps = (span_s > 0.0 && st.frames > 1)
+                           ? (static_cast<double>(st.frames - 1) / span_s)
+                           : 0.0;
     std::printf(
-        "[headless] summary: frames=%llu duration=%.1fs fps=%.2f decode_fail=%llu bad_header=%llu "
-        "partial=%zu bytes=%llu\n",
-        static_cast<unsigned long long>(st.frames), elapsed, fps,
+        "[headless] summary: frames=%llu window=%.1fs span=%.1fs fps=%.2f decode_fail=%llu "
+        "bad_header=%llu partial=%zu bytes=%llu\n",
+        static_cast<unsigned long long>(st.frames), window_s, span_s, fps,
         static_cast<unsigned long long>(st.decode_fail),
         static_cast<unsigned long long>(st.bad_header), partial,
         static_cast<unsigned long long>(st.bytes));
