@@ -48,6 +48,17 @@ target_include_directories(selfcheck PRIVATE
     "${VVOS_ROOT}/src"
 )
 
+
+# ---------------------------------------------------------------------------
+# framecheck：用**真实 MessageCodec::Decode** 校验板端抓到的帧文件
+#
+# 存在理由：字节数对 ≠ 能被解开。板端曾出现双层长度头 bug，
+# 「440 帧、残留 0」全部正常但 Decode 必然失败 —— 只有真解码才能抓到。
+# ---------------------------------------------------------------------------
+add_executable(framecheck src/framecheck.cpp)
+target_link_libraries(framecheck PRIVATE vr_base_framework)
+target_include_directories(framecheck PRIVATE "${VVOS_ROOT}/src")
+
 # ---------------------------------------------------------------------------
 # M1 · GUI 壳
 #
