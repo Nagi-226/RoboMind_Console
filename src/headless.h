@@ -11,7 +11,9 @@
 struct HeadlessOptions {
     quint16 port{9000};
     int     duration_s{0};   // >0：跑满 N 秒自动退出；0：一直跑（Ctrl+C）
-    int     expect{-1};      // >=0：期望帧数，不符则退出码非 0
+    int     expect{-1};      // >=0：期望精确帧数（保留，但帧数随窗口抖动，不建议 CI 用）
+    double  min_fps{-1.0};   // >=0：帧率下限（推荐判据，与采集时长解耦）
+    double  max_fps{-1.0};   // >=0：帧率上限
     bool    quiet{false};    // true：只打 summary，不打每帧
 };
 

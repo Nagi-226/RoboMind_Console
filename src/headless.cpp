@@ -1,6 +1,7 @@
 #include "headless.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QHostAddress>
 #include <QMap>
 #include <QTcpServer>
@@ -44,6 +45,9 @@ QString Pick(const QString& payload, const char* key)
 
 int RunHeadless(const HeadlessOptions& opt)
 {
+    QElapsedTimer clock;
+    clock.start();
+
     QTcpServer server;
     FrameStream stream;
     Stats st;
@@ -136,9 +140,12 @@ int RunHeadless(const HeadlessOptions& opt)
     app->exec();
 
     const size_t partial = stream.pending();
+    const double elapsed = static_cast<double>(clock.elapsed()) / 1000.0;
+    const double fps = (elapsed > 0.0) ? (static_cast<double>(st.frames) / elapsed) : 0.0;
     std::printf(
-        "[headless] summary: frames=%llu decode_fail=%llu bad_header=%llu partial=%zu bytes=%llu\n",
-        static_cast<unsigned long long>(st.frames),
+        "[headless] summary: frames=%llu duration=%.1fs fps=%.2f decode_fail=%llu bad_header=%llu "
+        "partial=%zu bytes=%llu\n",
+        static_cast<unsigned long long>(st.frames), elapsed, fps,
         static_cast<unsigned long long>(st.decode_fail),
         static_cast<unsigned long long>(st.bad_header), partial,
         static_cast<unsigned long long>(st.bytes));
@@ -146,6 +153,16 @@ int RunHeadless(const HeadlessOptions& opt)
 
     int rc = 0;
     if (st.decode_fail != 0 || st.bad_header != 0) {
+        rc = 1;
+    }
+    if (opt.min_fps >= 0.0 && fps < opt.min_fps) {
+        std::printf("[headless] FPS TOO LOW: %.2f < %.2f\n", fps, opt.min_fps);
+        std::fflush(stdout);
+        rc = 1;
+    }
+    if (opt.max_fps >= 0.0 && fps > opt.max_fps) {
+        std::printf("[headless] FPS TOO HIGH: %.2f > %.2f\n", fps, opt.max_fps);
+        std::fflush(stdout);
         rc = 1;
     }
     if (opt.expect >= 0 && st.frames != static_cast<quint64>(opt.expect)) {

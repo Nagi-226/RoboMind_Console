@@ -7,6 +7,7 @@
 #include <QString>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "headless.h"
@@ -32,10 +33,14 @@ int main(int argc, char** argv)
         } else if (std::strcmp(a, "--expect") == 0) {
             unsigned v = 0;
             if (next(&v)) opt.expect = static_cast<int>(v);
+        } else if (std::strcmp(a, "--min-fps") == 0) {
+            if (i + 1 < argc) opt.min_fps = std::atof(argv[++i]);
+        } else if (std::strcmp(a, "--max-fps") == 0) {
+            if (i + 1 < argc) opt.max_fps = std::atof(argv[++i]);
         } else if (std::strcmp(a, "--quiet") == 0) {
             opt.quiet = true;
         } else if (std::strcmp(a, "--help") == 0) {
-            std::printf("用法: %s [--port N] [--duration S] [--expect N] [--quiet]\n", argv[0]);
+            std::printf("用法: %s [--port N] [--duration S] [--min-fps F] [--max-fps F] [--expect N] [--quiet]\n", argv[0]);
             return 0;
         }
     }
