@@ -18,6 +18,7 @@
 class QLabel;
 class QTcpServer;
 class QTcpSocket;
+class LanChatSink;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -41,8 +42,10 @@ private:
     QTcpServer*   server_{nullptr};
     QTcpSocket*   client_{nullptr};
     FrameStream   stream_;
+    LanChatSink*  sink_{nullptr};
 
     QLabel*       conn_label_{nullptr};
+    QLabel*       sink_label_{nullptr};
     QLabel*       status_hint_{nullptr};
     QLabel*       banner_{nullptr};
     QLabel*       raw_view_{nullptr};

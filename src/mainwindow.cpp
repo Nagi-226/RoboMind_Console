@@ -14,6 +14,7 @@
 
 #include "interconnect/message_codec.hpp"
 #include "interconnect/message_envelope.hpp"
+#include "lanchat_sink.h"
 
 namespace {
 
@@ -93,6 +94,12 @@ MainWindow::MainWindow(quint16 port, QWidget* parent)
         SetConnState("未连接", "#A7B0C0");
         status_hint_->setText(QString("正在监听 %1，等待板子上报…").arg(port_));
     }
+
+    sink_ = new LanChatSink(LanChatSink::LoadConfig(), this);
+    connect(sink_, &LanChatSink::stateChanged, this, [this](const QString& s) {
+        sink_label_->setText(QString("LanChat: %1").arg(s));
+    });
+    sink_label_->setText(QString("LanChat: %1").arg(sink_->stateText()));
 }
 
 void MainWindow::BuildUi()
@@ -118,6 +125,10 @@ void MainWindow::BuildUi()
     conn_label_ = new QLabel("未连接");
     conn_label_->setStyleSheet("color: #A7B0C0;");
     top->addWidget(conn_label_);
+
+    sink_label_ = new QLabel("LanChat: 未启用");
+    sink_label_->setStyleSheet("color: #6B7484;");
+    top->addWidget(sink_label_);
     root->addLayout(top);
 
     auto* grid = new QGridLayout;
@@ -239,6 +250,15 @@ void MainWindow::ApplyFrame(const QString& text)
     for (auto it = field_labels_.begin(); it != field_labels_.end(); ++it) {
         const QString v = kv.value(it.key(), "<缺失>");
         it.value()->setText(v);
+    }
+
+    // dv=N/I 时 dl 数值无意义（板端 wire_codec 注释明确），只在结果有效时告警。
+    // attention_level 未上 wire（payload 仅 dv/dl/ev/es/mv/ms/ab/dg 8 键），第一版不判。
+    if (kv.value("dv") == "O") {
+        const int dl = kv.value("dl", "0").toInt();
+        if (dl >= 2) {
+            sink_->sendAlert(dl, QString("PPM 疲劳告警：drowsy_level=%1").arg(dl));
+        }
     }
 
     statusBar()->showMessage(

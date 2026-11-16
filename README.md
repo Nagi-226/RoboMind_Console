@@ -229,6 +229,66 @@ objdump -p build/dist/RoboMindConsole.exe | grep -i ^Subsystem
 
 ---
 
+## LanChat 告警转发（可选，默认关闭）
+
+Console 作为桥，把 PPM 疲劳告警转发到 LanChat-Next 服务端（方案 C，板子零改动）：
+
+```
+板子 --VVOS envelope(TCP 9000)--> Console --[u32 BE len]+JSON--> LanChat 服务端(默认 9001)
+```
+
+帧格式与 VVOS wire 同构，只换 payload 为 JSON。第一版只实现三个消息类型：
+`Login`(2) / `SendMsg`(5) / `Heartbeat`(20，10s 一次)；接收方向只判
+`LoginSuccessReturn`(3) / `LoginFailedReturn`(4)，其余不解析。
+
+### 配置
+
+复制 `robomind-console.ini.example` 为 `robomind-console.ini`，放在**当前工作目录**
+或 **exe 所在目录**（前者优先）。无配置文件 = 全默认 = 关闭。
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `lanchat.enabled` | `false` | 默认关闭，避免一启动就连不上报错 |
+| `lanchat.host` | `127.0.0.1` | LanChat 服务端地址 |
+| `lanchat.port` | `9001` | LanChat 服务端端口 |
+| `lanchat.target` | `0` | **接收者数字用户 id（私聊）。群发需 `SendGroupMsg`(type=16)，未实现。** |
+
+**凭据只从环境变量读**，不进配置文件、不进日志：
+
+```
+ROBOMIND_LANCHAT_USER_ID      # 数字 id，账号需预先用 LanChat 客户端注册
+ROBOMIND_LANCHAT_PASSWORD     # 明文密码，仅登录时用
+```
+
+缺任一变量 → sink 保持不启用，不报错不崩溃。登录被服务端拒绝（type=4）→ 停用并不再重试
+（凭据错误是配置问题，重试无意义）。
+
+### 行为
+
+- 告警触发：`dv=O`（结果有效）且 `dl>=2`。**attention_level 未上 wire**
+  （板端 payload 仅 `dv/dl/ev/es/mv/ms/ab/dg` 8 键），第一版不判，等字段上 wire 再接。
+- 去抖：同一告警 30 秒内不重复发。
+- 断线重连：指数退避 1s→2s→4s→8s→16s→30s（上限 30s），连上即复位。
+- 脱敏日志：每条发送打 `type + 长度 + 目标 id`（msg 只打前 20 字符 + 总长度，
+  密码永不出现），写入**当前工作目录** `lanchat-sink.log` 并同步 qInfo。
+
+### 单机验证（不需要板子）
+
+```bash
+py tools/fake_lanchat.py                 # 假服务端：struct.unpack 独立解帧，打印收到的 JSON
+py tools/replay_frames.py --dv O --dl 2  # 真实抓包帧等长替换 dv/dl 后注入 9000
+```
+
+`tools/replay_frames.py` 只重写信封 seq/ts 与可选的 dv/dl 单字符，帧结构来自
+`testdata/frames_fixed.bin` 真实抓包。headless 回归注入：
+
+```bash
+./build/robomind-headless.exe --port 9000 --duration 30 --expect 100 --min-fps 8 --max-fps 12 &
+py tools/replay_frames.py --repeat 10 --ts-step 100 --pace 0.1   # 100 帧，ts 跨度 9.9s → fps=10
+```
+
+---
+
 ## 为什么 selfcheck 是独立可执行文件
 
 GUI 是 `WIN32` 子系统，stdout 默认不接父控制台。若把 `--selfcheck` 塞进 GUI 程序，
