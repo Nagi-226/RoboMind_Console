@@ -158,3 +158,9 @@ tools/              独立假服务端、重放及下行验证
 ```
 
 M1 / M2 / M3 的历史验收、图标排错和旧资源数据可查 [此前 README](https://github.com/Nagi-226/RoboMind_Console/blob/0407fb0/README.md)；当前双向桥能力以本 README 为准。
+
+## PC 富媒体隔离（2026-11-21）
+
+LanChat Qt 已实现 PC 间图片、GIF 和文件传输。Console 的 LanChatSink 与 DisplayBridge 两层入口仅允许 text，拒绝 image/file/sticker 及任何 attachment 字段；这些内容不下发容量有限的 S3。原有中文文字、群/私聊告警、显示回执和页面控制保留。
+
+独立验证 `python tools/test_display_bridge.py` 增加非文字及附件伪装用例。PC 分发与共享主机操作见 [LanChat 局域网部署](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/lan-deployment.md)。本轮无需修改或烧录 S3 固件。

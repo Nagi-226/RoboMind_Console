@@ -181,7 +181,8 @@ void LanChatSink::OnReadyRead()
             Log("rx LoginFailedReturn (type=4): credentials rejected, sink disabled (no retry)");
             socket_->disconnectFromHost();
         }
-        if (cfg_.receiveMessages && doc.object().value("fromId").toInt() != user_id_) {
+        if (cfg_.receiveMessages && doc.object().value("content_type").toString("text") == "text"
+            && !doc.object().contains("attachment") && doc.object().value("fromId").toInt() != user_id_) {
             if (type == 6 && doc.object().value("toId").toInt() == user_id_)
                 emit messageReceived(doc.object());
             else if (type == 17 && cfg_.groupId > 0 && doc.object().value("groupId").toInt() == cfg_.groupId)

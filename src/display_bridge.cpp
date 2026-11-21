@@ -27,6 +27,7 @@ void DisplayBridge::record(const QString& id,const QString& state,const QString&
     while(deliveries_.size()>16)deliveries_.removeLast();
 }
 void DisplayBridge::enqueue(const QJsonObject& message){
+    if(message.value("content_type").toString("text")!="text" || message.contains("attachment")) return;
     const QString id=message.value("msg_id").toVariant().toString();
     const QString text=message.value("msg").toString();
     if(!idValid(id))return;

@@ -66,7 +66,14 @@ def main():
                         return values
             def state_for(id):
                 return next((v['state'] for v in snapshot().get('display',{}).get('deliveries',[]) if v['id']==str(id)),None)
+            for kind,id in [('file',201),('image',202),('sticker',203)]:
+                chat.sendall(packet({'type':6,'msg_id':str(id),'fromId':1000,'toId':4242,
+                                    'content_type':kind,'msg':'PC attachment only',
+                                    'attachment':{'attachment_id':'1000-test','file_name':'attachment.bin'}}))
+            chat.sendall(packet({'type':6,'msg_id':'204','fromId':1000,'toId':4242,
+                                'msg':'attachment disguised as text','attachment':{}}))
             send_message(101,text);values=message(101);assert values['text']==text
+            assert all(state_for(id) is None for id in (201,202,203,204))
             ack=envelope('ui/message_ack','id=101;status=accepted')
             board.sendall(ack[:2]);board.sendall(ack[2:7]);board.sendall(ack[7:])
             wait(lambda:state_for(101)=='accepted')
