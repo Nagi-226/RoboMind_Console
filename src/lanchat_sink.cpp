@@ -39,6 +39,8 @@ LanChatSink::Config LanChatSink::LoadConfig()
         cfg.host = ini.value("host", "127.0.0.1").toString();
         cfg.port = static_cast<quint16>(ini.value("port", 9001).toUInt());
         cfg.target = ini.value("target", 0).toInt();
+        cfg.groupId = ini.value("group_id", 0).toInt();
+        cfg.receiveMessages = ini.value("receive_messages", false).toBool();
         ini.endGroup();
     }
     return cfg;
@@ -67,10 +69,10 @@ LanChatSink::LanChatSink(const Config& cfg, QObject* parent)
         Log("sink disabled: ROBOMIND_LANCHAT_USER_ID / ROBOMIND_LANCHAT_PASSWORD missing or invalid");
         return;
     }
-    if (cfg_.target < 1) {
+    if (cfg_.target < 1 && cfg_.groupId < 1 && !cfg_.receiveMessages) {
         disabled_ = true;
-        SetState("未启用（target 无效）");
-        Log("sink disabled: lanchat.target must be a positive user id");
+        SetState("未启用（未配置告警目标）");
+        Log("sink disabled: no alert destinations configured");
         return;
     }
 
@@ -88,8 +90,8 @@ LanChatSink::LanChatSink(const Config& cfg, QObject* parent)
     heartbeat_timer_->setInterval(kHeartbeatIntervalMs);
     connect(heartbeat_timer_, &QTimer::timeout, this, &LanChatSink::SendHeartbeat);
 
-    Log(QString("sink enabled: host=%1 port=%2 target=%3 user_id=%4")
-            .arg(cfg_.host).arg(cfg_.port).arg(cfg_.target).arg(user_id_));
+    Log(QString("sink enabled: host=%1 port=%2 target=%3 groupId=%4 user_id=%5")
+            .arg(cfg_.host).arg(cfg_.port).arg(cfg_.target).arg(cfg_.groupId).arg(user_id_));
     ConnectToServer();
 }
 
@@ -115,7 +117,7 @@ void LanChatSink::ScheduleReconnect()
 void LanChatSink::OnConnected()
 {
     backoff_ms_ = 1000;
-    // 乐观放行：同一 TCP 连接上服务端必然先处理 Login 再处理后续 SendMsg，
+    // 乐观放行：同一 TCP 连接上服务端必然先处理 Login 再处理后续告警，
     // 无需等 LoginSuccessReturn 才发。验收用假服务端只收不回，等回包会永远发不出。
     logged_in_ = true;
     heartbeat_timer_->start();
@@ -168,6 +170,9 @@ void LanChatSink::OnReadyRead()
             heartbeat_timer_->start();
             SetState("已登录");
             Log("rx LoginSuccessReturn (type=3), login confirmed");
+            if (cfg_.receiveMessages && cfg_.groupId > 0) {
+                SendFrame(QJsonObject{{"type", 13}, {"id", user_id_}, {"groupId", cfg_.groupId}}, "join configured display group");
+            }
         } else if (type == 4) {
             // 凭据被拒是配置错误而非网络故障，重试无意义，停用等人工处理
             disabled_ = true;
@@ -176,7 +181,12 @@ void LanChatSink::OnReadyRead()
             Log("rx LoginFailedReturn (type=4): credentials rejected, sink disabled (no retry)");
             socket_->disconnectFromHost();
         }
-        // type=21 (HeartbeatAck) 及其他类型：第一版只发不解析
+        if (cfg_.receiveMessages && doc.object().value("fromId").toInt() != user_id_) {
+            if (type == 6 && doc.object().value("toId").toInt() == user_id_)
+                emit messageReceived(doc.object());
+            else if (type == 17 && cfg_.groupId > 0 && doc.object().value("groupId").toInt() == cfg_.groupId)
+                emit messageReceived(doc.object());
+        }
     }
 }
 
@@ -202,12 +212,23 @@ void LanChatSink::sendAlert(int level, const QString& summary)
         return;
     }
 
-    SendFrame(QJsonObject{{"type", 5},
-                          {"fromId", user_id_},
-                          {"toId", cfg_.target},
-                          {"msg", summary}},
-              QString("toId=%1 msg_preview=\"%2\" msg_len=%3")
-                  .arg(cfg_.target).arg(summary.left(20)).arg(summary.size()));
+    if (cfg_.groupId > 0) {
+        SendFrame(QJsonObject{{"type", 16},
+                              {"fromId", user_id_},
+                              {"groupId", cfg_.groupId},
+                              {"msg", summary}},
+                  QString("groupId=%1 msg_preview=\"%2\" msg_len=%3")
+                      .arg(cfg_.groupId).arg(summary.left(20)).arg(summary.size()));
+    }
+    if (cfg_.target > 0) {
+        SendFrame(QJsonObject{{"type", 5},
+                              {"fromId", user_id_},
+                              {"toId", cfg_.target},
+                              {"msg", summary}},
+                  QString("toId=%1 msg_preview=\"%2\" msg_len=%3")
+                      .arg(cfg_.target).arg(summary.left(20)).arg(summary.size()));
+    }
+    // 一次告警可发往两处，所有目标发送后只记一次去抖。
     last_sent_ms_[summary] = now;
 }
 

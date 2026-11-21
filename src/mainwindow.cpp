@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include <QFont>
+#include <QDateTime>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -15,6 +16,7 @@
 #include "interconnect/message_codec.hpp"
 #include "interconnect/message_envelope.hpp"
 #include "lanchat_sink.h"
+#include "display_bridge.h"
 
 namespace {
 
@@ -96,8 +98,11 @@ MainWindow::MainWindow(quint16 port, QWidget* parent)
     }
 
     sink_ = new LanChatSink(LanChatSink::LoadConfig(), this);
+    display_ = new DisplayBridge(this);
+    connect(sink_, &LanChatSink::messageReceived, display_, &DisplayBridge::enqueue);
     connect(sink_, &LanChatSink::stateChanged, this, [this](const QString& s) {
         sink_label_->setText(QString("LanChat: %1").arg(s));
+        display_->setLanChatConnected(s == "已登录");
     });
     sink_label_->setText(QString("LanChat: %1").arg(sink_->stateText()));
 }
@@ -202,6 +207,7 @@ void MainWindow::OnNewConnection()
             continue;
         }
         client_ = s;
+        display_->attach(client_);
         stream_.Reset();
         connect(client_, &QTcpSocket::readyRead, this, &MainWindow::OnReadyRead);
         connect(client_, &QTcpSocket::disconnected, this, &MainWindow::OnDisconnected);
@@ -220,6 +226,7 @@ void MainWindow::OnReadyRead()
     stream_.Feed(chunk.constData(), static_cast<size_t>(chunk.size()), &frames);
 
     if (stream_.bad_header()) {
+        ++bad_headers_;
         status_hint_->setText("收到非法长度头 —— 流已错位，已清空缓冲重新对齐");
         stream_.Reset();
     }
@@ -233,11 +240,15 @@ void MainWindow::ApplyFrame(const QString& text)
     MessageEnvelope env;
     const ErrorCode rc = MessageCodec::Decode(text.toStdString(), &env);
     if (rc != ErrorCode::kOk) {
+        ++decode_failures_;
         status_hint_->setText(QString("解码失败 rc=%1（帧已丢弃）")
                                   .arg(static_cast<int>(rc)));
         return;
     }
+    if (env.topic.rfind("ui/", 0) == 0) { display_->receive(env); return; }
     ++frames_;
+    last_frame_ms_ = QDateTime::currentMSecsSinceEpoch();
+    last_source_ = QString::fromStdString(env.source);
     raw_view_->setText(text);
 
     const QMap<QString, QString> kv = ParsePayload(QString::fromStdString(env.payload));
@@ -278,6 +289,24 @@ void MainWindow::OnDisconnected()
     stream_.Reset();
     SetConnState("断线（等待重连）", "#FFB020");
     status_hint_->setText("板子已断开 —— 等待其自动重连（本应用无需重启）");
+}
+
+bool MainWindow::navigateBoard(const QString& id,const QString& action){return display_->navigate(id,action);}
+QJsonObject MainWindow::bridgeStatus() const
+{
+    return {{"updated_ms", QDateTime::currentMSecsSinceEpoch()},
+            {"listening", server_->isListening()},
+            {"listen_port", port_},
+            {"listen_error", server_->isListening() ? QString() : server_->errorString()},
+            {"board_connected", client_ && client_->state() == QAbstractSocket::ConnectedState},
+            {"board_peer", client_ ? client_->peerAddress().toString() : QString()},
+            {"frames", static_cast<qint64>(frames_)},
+            {"decode_failures", static_cast<qint64>(decode_failures_)},
+            {"bad_headers", static_cast<qint64>(bad_headers_)},
+            {"last_frame_ms", last_frame_ms_},
+            {"source", last_source_},
+            {"lanchat_state", sink_->stateText()},
+            {"display", display_->status()}};
 }
 
 void MainWindow::OnAcceptError(int code)

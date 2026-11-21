@@ -11,6 +11,7 @@
 
 #include <QHash>
 #include <QMainWindow>
+#include <QJsonObject>
 #include <QString>
 
 #include "frame_stream.h"
@@ -19,12 +20,15 @@ class QLabel;
 class QTcpServer;
 class QTcpSocket;
 class LanChatSink;
+class DisplayBridge;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
     explicit MainWindow(quint16 port, QWidget* parent = nullptr);
+    QJsonObject bridgeStatus() const;
+    bool navigateBoard(const QString& id,const QString& action);
 
 private slots:
     void OnNewConnection();
@@ -43,6 +47,7 @@ private:
     QTcpSocket*   client_{nullptr};
     FrameStream   stream_;
     LanChatSink*  sink_{nullptr};
+    DisplayBridge* display_{nullptr};
 
     QLabel*       conn_label_{nullptr};
     QLabel*       sink_label_{nullptr};
@@ -51,6 +56,10 @@ private:
     QLabel*       raw_view_{nullptr};
     QHash<QString, QLabel*> field_labels_;   // key -> value label
     quint64       frames_{0};
+    quint64       decode_failures_{0};
+    quint64       bad_headers_{0};
+    qint64        last_frame_ms_{0};
+    QString       last_source_;
 };
 
 #endif  // MAIN_WINDOW_H

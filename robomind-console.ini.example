@@ -8,8 +8,10 @@ enabled=false
 host=127.0.0.1
 port=9001
 # target = 接收者数字用户 id（私聊 SendMsg type=5）。
-# 群发需 SendGroupMsg(type=16)，未实现。
 target=0
+# group_id = 群 id（群发 SendGroupMsg type=16），0 = 不发群。
+group_id=0
+# 两者都 > 0 时，群和私聊各发一份；两者都为 0 时不转发。
 
 # 凭据不写进本文件，只从环境变量读：
 #   ROBOMIND_LANCHAT_USER_ID    数字 id（账号需预先用 LanChat 客户端注册）

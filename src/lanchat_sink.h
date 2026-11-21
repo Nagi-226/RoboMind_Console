@@ -1,8 +1,8 @@
 // LanChatSink —— 把 PPM 告警转发到 LanChat-Next 服务端（方案 C：Console 做桥）
 //
 // 帧格式与 VVOS wire 同构：[u32 大端长度] + payload，payload 换成 JSON。
-// 第一版只做三个消息类型：Login(2) / SendMsg(5) / Heartbeat(20)。
-// 接收方向只判 LoginSuccessReturn(3) / LoginFailedReturn(4)，其余不解析。
+// 发送四个消息类型：Login(2) / SendMsg(5) / SendGroupMsg(16) / Heartbeat(20)。
+// 接收方向处理登录回包；启用 receiveMessages 时接收私聊 / 配置群消息并桥接到板端。
 //
 // 凭据只从环境变量读（ROBOMIND_LANCHAT_USER_ID / ROBOMIND_LANCHAT_PASSWORD），
 // 不落配置文件、不落日志。缺凭据 → 静默降级为不启用。
@@ -28,8 +28,9 @@ public:
         bool    enabled{false};
         QString host{"127.0.0.1"};
         quint16 port{9001};
-        // target = 接收者数字用户 id（私聊 SendMsg）。群发需 SendGroupMsg(type=16)，未实现。
-        int     target{0};
+        int     target{0};    // 私聊：接收者数字用户 id
+        int     groupId{0};   // 群发：群 id。0 = 不发群
+        bool    receiveMessages{false}; // ReceiveMsg -> VVOS display; default preserves send-only configs.
     };
 
     // 读 robomind-console.ini：先当前工作目录，后 exe 所在目录；无文件 → 全默认（关闭）。
@@ -44,6 +45,7 @@ public:
 
 signals:
     void stateChanged(const QString& text);
+    void messageReceived(const QJsonObject& message);
 
 private:
     void ConnectToServer();
