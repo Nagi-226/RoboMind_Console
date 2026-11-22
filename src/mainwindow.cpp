@@ -17,6 +17,7 @@
 #include "interconnect/message_envelope.hpp"
 #include "lanchat_sink.h"
 #include "display_bridge.h"
+#include "status_query.h"
 
 namespace {
 
@@ -100,6 +101,8 @@ MainWindow::MainWindow(quint16 port, QWidget* parent)
     sink_ = new LanChatSink(LanChatSink::LoadConfig(), this);
     display_ = new DisplayBridge(this);
     connect(sink_, &LanChatSink::messageReceived, display_, &DisplayBridge::enqueue);
+    queries_=new StatusQuery(sink_,display_,[this]{return bridgeStatus();},this);
+    connect(sink_,&LanChatSink::messageReceived,this,[this](const QJsonObject& message){queries_->consume(message);});
     connect(sink_, &LanChatSink::stateChanged, this, [this](const QString& s) {
         sink_label_->setText(QString("LanChat: %1").arg(s));
         display_->setLanChatConnected(s == "已登录");
@@ -245,7 +248,7 @@ void MainWindow::ApplyFrame(const QString& text)
                                   .arg(static_cast<int>(rc)));
         return;
     }
-    if (env.topic.rfind("ui/", 0) == 0) { display_->receive(env); return; }
+    if (env.topic.rfind("ui/", 0) == 0 || env.topic=="device/query_reply") { display_->receive(env); return; }
     ++frames_;
     last_frame_ms_ = QDateTime::currentMSecsSinceEpoch();
     last_source_ = QString::fromStdString(env.source);
@@ -306,7 +309,8 @@ QJsonObject MainWindow::bridgeStatus() const
             {"last_frame_ms", last_frame_ms_},
             {"source", last_source_},
             {"lanchat_state", sink_->stateText()},
-            {"display", display_->status()}};
+            {"display", display_->status()},
+            {"queries", queries_ ? queries_->status() : QJsonObject()}};
 }
 
 void MainWindow::OnAcceptError(int code)

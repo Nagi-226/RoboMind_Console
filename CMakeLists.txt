@@ -81,6 +81,7 @@ add_executable(robomind-console WIN32
     src/main.cpp src/mainwindow.cpp src/mainwindow.h
     src/lanchat_sink.cpp src/lanchat_sink.h
     src/display_bridge.cpp src/display_bridge.h
+    src/status_query.cpp src/status_query.h
 )
 target_link_libraries(robomind-console PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network

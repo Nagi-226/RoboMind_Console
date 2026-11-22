@@ -99,6 +99,7 @@ void LanChatSink::ConnectToServer()
 {
     if (disabled_) return;
     logged_in_ = false;
+    login_confirmed_ = false;
     rx_buf_.clear();
     SetState(QString("连接中 %1:%2").arg(cfg_.host).arg(cfg_.port));
     Log(QString("connecting to %1:%2").arg(cfg_.host).arg(cfg_.port));
@@ -130,6 +131,7 @@ void LanChatSink::OnConnected()
 void LanChatSink::OnDisconnected()
 {
     logged_in_ = false;
+    login_confirmed_ = false;
     heartbeat_timer_->stop();
     if (disabled_) return;
     SetState("断线，等待重连");
@@ -167,6 +169,7 @@ void LanChatSink::OnReadyRead()
         const int type = doc.object().value("type").toInt(-1);
         if (type == 3) {
             logged_in_ = true;
+            login_confirmed_ = true;
             heartbeat_timer_->start();
             SetState("已登录");
             Log("rx LoginSuccessReturn (type=3), login confirmed");
@@ -176,6 +179,7 @@ void LanChatSink::OnReadyRead()
         } else if (type == 4) {
             // 凭据被拒是配置错误而非网络故障，重试无意义，停用等人工处理
             disabled_ = true;
+            login_confirmed_ = false;
             heartbeat_timer_->stop();
             SetState("登录被拒，已停用");
             Log("rx LoginFailedReturn (type=4): credentials rejected, sink disabled (no retry)");
@@ -231,6 +235,18 @@ void LanChatSink::sendAlert(int level, const QString& summary)
     }
     // 一次告警可发往两处，所有目标发送后只记一次去抖。
     last_sent_ms_[summary] = now;
+}
+
+bool LanChatSink::sendReply(const QJsonObject& original,const QString& text)
+{
+    if(disabled_||!login_confirmed_||!socket_||socket_->state()!=QAbstractSocket::ConnectedState||socket_->bytesToWrite()>65536||text.isEmpty()||text.toUtf8().size()>8192)return false;
+    const int from=original.value("fromId").toInt(),type=original.value("type").toInt();
+    if(from<1||from==user_id_)return false;
+    QJsonObject reply{{"fromId",user_id_},{"msg",text},{"content_type","text"}};
+    if(type==6&&original.value("toId").toInt()==user_id_){reply.insert("type",5);reply.insert("toId",from);}
+    else if(type==17&&cfg_.groupId>0&&original.value("groupId").toInt()==cfg_.groupId){reply.insert("type",16);reply.insert("groupId",cfg_.groupId);}
+    else return false;
+    SendFrame(reply,"device query reply (content omitted)");return true;
 }
 
 void LanChatSink::SendFrame(const QJsonObject& body, const QString& log_detail)

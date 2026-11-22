@@ -40,6 +40,7 @@ public:
 
     // 同一 summary 30 秒内不重复发。未登录时丢弃（不占去抖窗口，恢复后可补发）。
     void sendAlert(int level, const QString& summary);
+    bool sendReply(const QJsonObject& original,const QString& text);
 
     QString stateText() const { return state_; }
 
@@ -68,6 +69,7 @@ private:
     QByteArray  rx_buf_;
     int         backoff_ms_{1000};
     bool        logged_in_{false};
+    bool        login_confirmed_{false};
     bool        disabled_{false};   // 配置关闭 / 缺凭据 / 登录被拒（type=4）
     quint64     msg_counter_{0};
     QHash<QString, qint64> last_sent_ms_;

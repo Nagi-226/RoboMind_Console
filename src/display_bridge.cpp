@@ -19,7 +19,7 @@ bool idValid(const QString& id){static const QRegularExpression expression("^[A-
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 }
 DisplayBridge::DisplayBridge(QObject* parent):QObject(parent){timer_.setInterval(250);connect(&timer_,&QTimer::timeout,this,&DisplayBridge::pump);timer_.start();}
-void DisplayBridge::attach(QTcpSocket* socket){board_=socket;ready_=false;navigation_=false;view_={};if(socket){connect(socket,&QTcpSocket::disconnected,this,[this]{ready_=false;navigation_=false;view_={};});projectState();}}
+void DisplayBridge::attach(QTcpSocket* socket){board_=socket;ready_=false;navigation_=false;queries_=false;view_={};if(socket){connect(socket,&QTcpSocket::disconnected,this,[this]{ready_=false;navigation_=false;queries_=false;view_={};});projectState();}}
 void DisplayBridge::setLanChatConnected(bool connected){if(lanchat_==connected)return;lanchat_=connected;projectState();}
 void DisplayBridge::record(const QString& id,const QString& state,const QString& reason){
     for(int i=0;i<deliveries_.size();++i)if(deliveries_[i].toObject().value("id").toString()==id){deliveries_.removeAt(i);break;}
@@ -70,9 +70,11 @@ void DisplayBridge::pump(){
     }
 }
 void DisplayBridge::receive(const vr::interconnect::MessageEnvelope& envelope){
+    if(envelope.source!="robomind-s3"||envelope.target!="console")return;
+    if(envelope.topic=="device/query_reply"){if(ready_&&queries_)emit statusReply(QString::fromStdString(envelope.payload));return;}
     const auto values=fields(QString::fromStdString(envelope.payload));
     if(envelope.topic=="ui/capabilities"){
-        ready_=values.value("version")=="1"&&values.value("text_max").toInt()>=384;navigation_=values.value("navigation")=="1";projectState();pump();return;
+        ready_=values.value("version")=="1"&&values.value("text_max").toInt()>=384;navigation_=values.value("navigation")=="1";queries_=values.value("query")=="1";projectState();pump();return;
     }
     if(envelope.topic=="ui/view_state"){
         bool valid=false;const int page=values.value("page").toInt(&valid);
@@ -86,4 +88,5 @@ void DisplayBridge::receive(const vr::interconnect::MessageEnvelope& envelope){
     if(state=="rendered"){++rendered_;pending_.remove(id);}
     else if(state=="rejected"){++rejected_;pending_.remove(id);}
 }
-QJsonObject DisplayBridge::status()const{return {{"terminal_ready",ready_},{"navigation",navigation_},{"view",view_},{"pending",pending_.size()},{"rendered",static_cast<qint64>(rendered_)},{"rejected",static_cast<qint64>(rejected_)},{"deliveries",deliveries_}};}
+bool DisplayBridge::requestStatus(const QString& id,const QString& kind){return ready_&&queries_&&idValid(id)&&(kind=="perception"||kind=="link"||kind=="device")&&send("device/query",QString("id=%1;kind=%2").arg(id,kind),5000);}
+QJsonObject DisplayBridge::status()const{return {{"terminal_ready",ready_},{"navigation",navigation_},{"query_supported",queries_},{"view",view_},{"pending",pending_.size()},{"rendered",static_cast<qint64>(rendered_)},{"rejected",static_cast<qint64>(rejected_)},{"deliveries",deliveries_}};}

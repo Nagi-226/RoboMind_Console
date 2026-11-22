@@ -4,7 +4,7 @@
 
 这是个人独立项目中的配套工具。感知决策由 PPM 承担；Console 负责通信、展示和操作。
 
-> 当前状态：2026-11-21。群发告警与终端下行桥已完成（`1145890`），PC 附件隔离已完成（`8b7a698`）；LanChat 集成时 Console 在后台运行，操作面板展示在 LanChat 主窗口中。关键词查询和外部模型 API 仍为待办。
+> 当前状态：2026-11-22。群发告警、终端下行桥、PC 附件隔离与四项只读查询均已完成初版；LanChat 集成时 Console 在后台运行，操作面板展示在 LanChat 主窗口中。外部模型 API 仍为待办。
 
 ## 当前功能
 
@@ -15,6 +15,7 @@
 | 文字下行 | 接收专用 LanChat 账号的私聊 / 配置群消息，经 VVOS 送入 S3 收件箱 |
 | 投递状态 | 有界队列、TTL、重试 / 判重，以及 accepted / rendered / rejected / expired 状态 |
 | 页面控制 | 总览 / 收件箱 / PPM / VVOS / 设备，以及详情、滚动、本地已读、中英文切换 |
+| 关键词查询 | 感知 / 链路 / 设备 / 帮助；有界请求、状态校验、按原私聊 / 配置群回复、离线 / 超时 / 限流 |
 | 后台桥 | 本机原子状态文件和页面请求；Windows 临时读锁写入失败可重试 |
 | 独立验证 | selfcheck、framecheck、无窗口接收工具和独立假服务端下行测试 |
 
@@ -148,6 +149,7 @@ VVOS MessageCodec 是信封契约的来源。S3 的 [wire_codec](https://github.
 src/mainwindow.*     TCP 接入、PPM 状态展示、显示桥接入
 src/lanchat_sink.*   LanChat 登录、群 / 私聊告警及消息接收
 src/display_bridge.* 有界投递、TTL、回执、页面控制
+src/status_query.*   只读命令识别、实板快照、原会话回复与判重
 src/frame_stream.h  流式切帧
 src/selfcheck.cpp   解码向量自检
 src/framecheck.cpp  正反抓包校验
@@ -165,10 +167,10 @@ LanChat Qt 已实现 PC 间图片、GIF 和文件传输。Console 的 LanChatSin
 
 独立验证 `python tools/test_display_bridge.py` 增加非文字及附件伪装用例。PC 分发与共享主机操作见 [LanChat 局域网部署](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/lan-deployment.md)。本轮无需修改或烧录 S3 固件。
 
-## 已确定的下一步（2026-11-21）
+## 查询反馈与下一步（2026-11-22）
 
-- **先做感知 / 链路 / 设备 / 帮助四项只读查询**。Console 识别明确命令、读取真实状态，必要时经 VVOS 请求 S3 快照，按原私聊 / 配置群回复。保留有效性、采样时间、离线 / 超时、请求判重和机器人循环过滤；目前尚未实现。
-- **异地通信采用 Tailscale 托管组网**。LanChat 主机保持在线，S3 保持本地 Wi-Fi → Console。查询完成后配置并验证异地登录、群聊、附件和掉线恢复；当前尚未部署。
+- **四项只读查询已实施并部署**。私聊完整匹配关键词 / 同义词，配置群要求 `/命令`；有界请求和严格状态校验，保留有效性、采样时间、离线 / 超时、判重、限流与机器人循环过滤。原查询的显示回执和聊天回复分别记录。
+- **Tailscale 本机接入已完成**。LanChat 主机保持在线，S3 保持本地 Wi-Fi → Console；当前只有一台可配合的 PC，异地两机登录、群聊、附件和掉线恢复待验。
 - **后续评估外部大模型 API**。优先由 PC / Console 管理调用、凭据和会话，通过明确的查询接口取得设备状态，再将结果返回聊天或板端。S3 不运行聊天大模型；模型接入与实际控制权限另行验证。
 
-2026-11-22 用户继续后从四项查询开始。跨仓职责、输入规则和验收清单统一维护在[下一轮实施入口](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/next-steps-20261122.md)。本次收尾只更新文档，保持现有部署。
+独立 `tools/test_status_queries.py` 通过（包含并发上限和限流），原 `tools/test_display_bridge.py` 回归通过；`tools/test_real_status_queries.py` 使用隔离账号 / DB 和真实 S3，验证四项私聊与一次群聊，5 条单次回复保存到历史，invalid=0。协议与资源见 [S3 查询协议](https://github.com/Nagi-226/RoboMind-S3/blob/master/docs/status-query-protocol.md)。跨仓进度和下一步统一维护在[实施清单](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/next-steps-20261122.md)。

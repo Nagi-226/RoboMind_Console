@@ -21,6 +21,7 @@ class QTcpServer;
 class QTcpSocket;
 class LanChatSink;
 class DisplayBridge;
+class StatusQuery;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -48,6 +49,7 @@ private:
     FrameStream   stream_;
     LanChatSink*  sink_{nullptr};
     DisplayBridge* display_{nullptr};
+    StatusQuery* queries_{nullptr};
 
     QLabel*       conn_label_{nullptr};
     QLabel*       sink_label_{nullptr};
