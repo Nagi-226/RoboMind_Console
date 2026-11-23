@@ -15,8 +15,10 @@ class AiStatusChat : public QObject {
 public:
     struct Config {
         bool enabled=false;
-        QString provider="anthropic",endpoint,model,key;
+        QString provider="anthropic",endpoint,model,key,reasoningEffort;
         int timeoutMs=45000;
+        int maxTokens=1200,dailyLimit=100,minIntervalMs=2000,maxConcurrent=4;
+        QString usageFile;
         static Config environment();
         bool valid() const;
     };
@@ -32,6 +34,9 @@ private:
     void finish(const QString& id,const QString& answer,bool success);
     void respond(const QJsonObject& original,const QString& text);
     void prune();
+    void loadUsage();
+    bool saveUsage();
+    void resetDay();
     Config config_;
     LanChatSink* sink_;
     StatusQuery* queries_;
@@ -42,4 +47,7 @@ private:
     QHash<QString,qint64> seen_,users_;
     QTimer timer_;
     quint64 requested_=0,replied_=0,failed_=0;
+    QString usageDay_,lastError_,lastErrorKind_;
+    qint64 dailyRequested_=0,inputTokens_=0,outputTokens_=0,cooldownUntil_=0,lastInvoke_=0;
+    int lastHttp_=0;
 };

@@ -18,6 +18,7 @@
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
+    app.setApplicationVersion("2026.11.23.2");
     QApplication::setApplicationName("RoboMind Console");
 
     quint16 port = 9000;

@@ -47,7 +47,8 @@ def run(provider, console=None):
         env = os.environ.copy()
         env.update(ROBOMIND_LANCHAT_USER_ID='4242', ROBOMIND_LANCHAT_PASSWORD='isolated-password',
                    ROBOMIND_AI_ENABLED='1', ROBOMIND_AI_PROVIDER=provider, ROBOMIND_AI_ENDPOINT=f'http://127.0.0.1:{model.server_port}',
-                   ROBOMIND_AI_MODEL='fixture-model', ROBOMIND_AI_KEY='isolated-ai-key')
+                   ROBOMIND_AI_MODEL='fixture-model', ROBOMIND_AI_KEY='isolated-ai-key', ROBOMIND_AI_REASONING_EFFORT='none',
+                   ROBOMIND_AI_INTERVAL_SECONDS='0',ROBOMIND_AI_USAGE_FILE=str(folder/'ai-usage.json'))
         executable = pathlib.Path(console).resolve() if console else ROOT/'build/dist/RoboMindConsole.exe'
         proc = subprocess.Popen([str(executable), '--bridge', '--port', str(board_port), '--status-file', str(status), '--stop-file', str(stop)], cwd=folder, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         results = queue.Queue(); failures = []; requests = []; stale = threading.Event()
@@ -106,6 +107,7 @@ def run(provider, console=None):
             original = ask('现在板子各项状态怎么样？'); answer(original)
             wait(lambda: len(calls) == 1)
             path, body, auth = calls[-1]
+            assert body.get('reasoning_effort') == ('none' if provider == 'openai' else None), body
             assert path == ('/v1/messages' if provider == 'anthropic' else '/v1/chat/completions')
             assert auth == 'Bearer isolated-ai-key'
             assert body['max_tokens']==1200

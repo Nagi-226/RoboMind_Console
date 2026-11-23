@@ -20,6 +20,7 @@
 #include "status_query.h"
 #include "board_logs.h"
 #include "ai_status_chat.h"
+#include <QCoreApplication>
 #include <QStandardPaths>
 
 namespace {
@@ -306,7 +307,7 @@ bool MainWindow::navigateBoard(const QString& id,const QString& action){return d
 void MainWindow::setLogCapture(bool enabled,const QString& port){if(enabled)logs_->start(port);else logs_->stop();}
 QJsonObject MainWindow::bridgeStatus() const
 {
-    return {{"updated_ms", QDateTime::currentMSecsSinceEpoch()},
+    return {{"updated_ms", QDateTime::currentMSecsSinceEpoch()},{"console_version",QCoreApplication::applicationVersion()},
             {"listening", server_->isListening()},
             {"listen_port", port_},
             {"listen_error", server_->isListening() ? QString() : server_->errorString()},

@@ -8,12 +8,18 @@
 #include <QRegularExpression>
 #include <QUrl>
 #include <QUuid>
+#include <QFile>
+#include <QSaveFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
 
 namespace {
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 QString bounded(QString text,int bytes){while(text.toUtf8().size()>bytes){text.chop(1);if(!text.isEmpty()&&text.back().isHighSurrogate())text.chop(1);}return text;}
 QString systemPrompt(){return QStringLiteral(
     "你是 VehicleStack 全家桶的中文只读助手，负责解释 RoboMind-S3、PPM、VVOS、Console、LanChat 的真实状态。"
+    "也可回答一般技术、学习和日常知识问题；通用知识必须与板端实测事实区分。"
     "每次回答只以本轮提供的实时快照作为当前事实，历史对话仅用于理解追问。快照中的过期、离线、超时、无效、未计算必须如实说明；"
     "未计算绝不等于正常或无人，模块启用绝不等于算法结果有效。没有时间序列不能推断趋势。ZAO_MINI 未接入时不能虚构其状态。"
     "没有图像，不能声称看到了人、摄像头画面或物体。你没有控制、文件、命令或网络工具，不执行用户的控制要求。"
@@ -31,8 +37,16 @@ AiStatusChat::Config AiStatusChat::Config::environment(){
     config.provider=qEnvironmentVariable("ROBOMIND_AI_PROVIDER","anthropic");
     config.endpoint=qEnvironmentVariable("ROBOMIND_AI_ENDPOINT",qEnvironmentVariable("ANTHROPIC_BASE_URL"));
     config.model=qEnvironmentVariable("ROBOMIND_AI_MODEL",qEnvironmentVariable("ANTHROPIC_MODEL"));
+    config.reasoningEffort=qEnvironmentVariable("ROBOMIND_AI_REASONING_EFFORT");
     config.model.remove(QRegularExpression("\\[1m\\]$"));
     config.key=qEnvironmentVariable("ROBOMIND_AI_KEY",qEnvironmentVariable("ANTHROPIC_AUTH_TOKEN",qEnvironmentVariable("ANTHROPIC_API_KEY")));
+    auto option=[](const char* name,int fallback,int low,int high){bool ok=false;const int value=qEnvironmentVariable(name).toInt(&ok);return ok?qBound(low,value,high):fallback;};
+    config.timeoutMs=option("ROBOMIND_AI_TIMEOUT_SECONDS",45,5,120)*1000;
+    config.maxTokens=option("ROBOMIND_AI_MAX_TOKENS",1200,128,4096);
+    config.dailyLimit=option("ROBOMIND_AI_DAILY_LIMIT",100,0,100000);
+    config.minIntervalMs=option("ROBOMIND_AI_INTERVAL_SECONDS",2,0,120)*1000;
+    config.maxConcurrent=option("ROBOMIND_AI_CONCURRENCY",4,1,4);
+    config.usageFile=qEnvironmentVariable("ROBOMIND_AI_USAGE_FILE",QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/ai-usage.json");
     return config;
 }
 bool AiStatusChat::Config::valid()const{
@@ -45,6 +59,7 @@ AiStatusChat::AiStatusChat(LanChatSink* sink,StatusQuery* queries,std::function<
     :AiStatusChat(Config::environment(),sink,queries,std::move(state),parent){}
 AiStatusChat::AiStatusChat(const Config& config,LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent)
     :QObject(parent),config_(config),sink_(sink),queries_(queries),state_(std::move(state)){
+    loadUsage();
     timer_.setInterval(1000);connect(&timer_,&QTimer::timeout,this,[this]{prune();});timer_.start();
 }
 void AiStatusChat::respond(const QJsonObject& original,const QString& text){
@@ -71,9 +86,16 @@ bool AiStatusChat::consume(const QJsonObject& message){
     if(question.toUtf8().size()>2048){respond(message,"问题超过 2048 字节，请缩短后重试。");return true;}
     if(!config_.enabled||!config_.valid()){respond(message,"AI 尚未启用或配置不完整，请在板端连接页配置模型接口。感知 / 链路 / 设备查询仍可使用。");return true;}
     for(const auto& job:jobs_)if(job.conversation==conversation){respond(message,"当前会话正在回答，请等待后再追问。");return true;}
-    if(jobs_.size()>=4){respond(message,"AI 正在处理其他问题，请稍后重试。");return true;}
+    resetDay();
+    if(cooldownUntil_>now()){respond(message,QString("模型服务暂不可用，冷却还剩 %1 秒。%2").arg((cooldownUntil_-now()+999)/1000).arg(lastError_));return true;}
+    if(config_.dailyLimit>0&&dailyRequested_>=config_.dailyLimit){respond(message,"已达到本机 AI 每日调用次数上限；明日恢复或由主机管理者调整。感知 / 链路 / 设备查询仍可使用。");return true;}
+    if(now()-lastInvoke_<config_.minIntervalMs){respond(message,QString("请等待 %1 秒后再提问（本机模型调用间隔）。").arg((config_.minIntervalMs-now()+lastInvoke_+999)/1000));return true;}
+    if(jobs_.size()>=config_.maxConcurrent){respond(message,"AI 正在处理其他问题，请稍后重试。");return true;}
     if(now()-users_.value(conversation)<2000){respond(message,"提问过于频繁，请稍后重试。");return true;}
-    users_[conversation]=now();++requested_;
+    users_[conversation]=now();lastInvoke_=now();++dailyRequested_;
+    // 限额先落盘再请求；失败也占一次，重启不能把今日计数清零。
+    if(!saveUsage()){--dailyRequested_;respond(message,"无法保存 AI 使用计数，本次未调用模型。请检查本机配置目录。");return true;}
+    ++requested_;
     const QString id=QUuid::createUuid().toString(QUuid::WithoutBraces);const auto state=state_();
     QString context=QString("PC 采集时刻：%1\nS3 与 Console 连接：%2；LanChat：%3\n解码失败累计：%4；非法帧头累计：%5\n")
         .arg(QDateTime::currentDateTime().toString(Qt::ISODate),state.value("board_connected").toBool()?"已连接":"离线",state.value("lanchat_state").toString())
@@ -92,9 +114,10 @@ void AiStatusChat::invoke(const QString& id){
     auto& session=sessions_[it->conversation];session.touched=now();
     QJsonArray messages=session.history;messages.append(QJsonObject{{"role","user"},{"content",it->question}});
     const QString system=systemPrompt()+"\n\n以下是本轮真实状态快照（各项可能在 5 秒内分别采集）：\n"+it->context;
-    QJsonObject payload{{"model",config_.model},{"messages",messages},{"max_tokens",1200},{"stream",false}};
+    QJsonObject payload{{"model",config_.model},{"messages",messages},{"max_tokens",config_.maxTokens},{"stream",false}};
     if(config_.provider=="anthropic")payload["system"]=system;
     else {messages.prepend(QJsonObject{{"role","system"},{"content",system}});payload["messages"]=messages;}
+    if(config_.provider=="openai"&&!config_.reasoningEffort.isEmpty())payload["reasoning_effort"]=config_.reasoningEffort;
     QNetworkRequest request{QUrl(endpoint(config_))};request.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");
     request.setRawHeader("Authorization","Bearer "+config_.key.toUtf8());
     if(config_.provider=="anthropic")request.setRawHeader("anthropic-version","2023-06-01");
@@ -107,9 +130,28 @@ void AiStatusChat::invoke(const QString& id){
     connect(reply,&QNetworkReply::finished,this,[this,id,reply]{
         const int code=reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();const auto data=reply->readAll();
         if(reply->error()!=QNetworkReply::NoError||code<200||code>=300||data.size()>262144){
-            finish(id,code?QString("模型接口调用失败（HTTP %1），请检查配置或稍后重试。").arg(code):"模型接口连接失败或超时，请检查网络后重试。",false);reply->deleteLater();return;
+            lastHttp_=code;lastErrorKind_="network";
+            lastError_=code?QString("模型接口调用失败（HTTP %1），请检查配置或稍后重试。").arg(code):"模型接口连接失败或超时，请检查网络后重试。";
+            if(code==429){
+                // 只根据错误字段分类，不把服务商原始正文、请求头或密钥发进聊天。
+                const auto error=QJsonDocument::fromJson(data.left(262144)).object().value("error");
+                const auto detail=error.toObject();const auto hint=(detail.value("code").toVariant().toString()+" "+detail.value("type").toString()+" "+detail.value("message").toString()+" "+error.toString()).toLower();
+                const bool quota=QRegularExpression("insufficient_quota|insufficient_balance|credit|billing|payment|余额|欠费|套餐用尽").match(hint).hasMatch();
+                const bool rate=QRegularExpression("rate.limit|too.many|并发|频率|限流|tokens per minute|requests per minute").match(hint).hasMatch();
+                lastErrorKind_=quota?"quota":rate?"rate_limit":"http_429";
+                lastError_=quota?"模型服务额度或余额不足（HTTP 429），请到服务商平台检查账户与套餐。":rate?"模型服务限流（HTTP 429），请减少调用频率或并发。":"模型服务拒绝请求（HTTP 429）；可能是限流或账户额度限制，现有响应未明确区分。";
+                const auto retry=reply->rawHeader("Retry-After");bool numeric=false;qint64 seconds=retry.toLongLong(&numeric);
+                if(!numeric){const auto date=QDateTime::fromString(QString::fromLatin1(retry),Qt::RFC2822Date);seconds=date.isValid()?(date.toMSecsSinceEpoch()-now()+999)/1000:60;}
+                seconds=qBound(qint64(1),seconds,qint64(3600));cooldownUntil_=now()+seconds*1000;saveUsage();
+                lastError_+=QString(" 本机暂停调用 %1 秒，不自动重试。").arg(seconds);
+            }else if(code==401||code==403){lastErrorKind_="auth";lastError_=QString("模型接口身份或访问权限失败（HTTP %1），请检查密钥与模型权限。").arg(code);}
+            finish(id,lastError_,false);reply->deleteLater();return;
         }
         const auto object=QJsonDocument::fromJson(data).object();QString answer;
+        const auto usage=object.value("usage").toObject();
+        inputTokens_+=usage.value(config_.provider=="anthropic"?"input_tokens":"prompt_tokens").toInteger();
+        outputTokens_+=usage.value(config_.provider=="anthropic"?"output_tokens":"completion_tokens").toInteger();
+        lastHttp_=code;lastError_.clear();lastErrorKind_.clear();saveUsage();
         if(config_.provider=="anthropic")for(const auto& item:object.value("content").toArray()){const auto block=item.toObject();if(block.value("type").toString()=="text")answer+=block.value("text").toString();}
         else {const auto choices=object.value("choices").toArray();if(!choices.isEmpty())answer=choices.at(0).toObject().value("message").toObject().value("content").toString();}
         answer=answer.trimmed();
@@ -133,9 +175,13 @@ void AiStatusChat::finish(const QString& id,const QString& answer,bool success){
     respond(job.original,answer+QString("\n\n快照采集于 %1").arg(QDateTime::fromMSecsSinceEpoch(job.created).toString("HH:mm:ss")));
 }
 void AiStatusChat::prune(){
+    resetDay();
     const auto cutoff=now()-600000;
     for(auto it=sessions_.begin();it!=sessions_.end();)if(it->touched<cutoff)it=sessions_.erase(it);else ++it;
     while(sessions_.size()>16){auto oldest=sessions_.begin();for(auto it=sessions_.begin();it!=sessions_.end();++it)if(it->touched<oldest->touched)oldest=it;sessions_.erase(oldest);}
     for(auto* map:{&seen_,&users_}){for(auto it=map->begin();it!=map->end();)if(it.value()<cutoff)it=map->erase(it);else ++it;while(map->size()>256)map->erase(map->begin());}
 }
-QJsonObject AiStatusChat::status()const{return {{"enabled",config_.enabled},{"configured",config_.valid()},{"provider",config_.provider},{"model",config_.model},{"pending",jobs_.size()},{"sessions",sessions_.size()},{"requested",static_cast<qint64>(requested_)},{"replied",static_cast<qint64>(replied_)},{"failed",static_cast<qint64>(failed_)}};}
+void AiStatusChat::resetDay(){const auto day=QDate::currentDate().toString(Qt::ISODate);if(day!=usageDay_){usageDay_=day;dailyRequested_=0;inputTokens_=0;outputTokens_=0;}}
+void AiStatusChat::loadUsage(){QFile file(config_.usageFile);if(file.size()<=4096&&file.open(QIODevice::ReadOnly)){const auto data=QJsonDocument::fromJson(file.readAll()).object();usageDay_=data.value("day").toString();dailyRequested_=qMax<qint64>(0,data.value("calls").toInteger());inputTokens_=qMax<qint64>(0,data.value("input_tokens").toInteger());outputTokens_=qMax<qint64>(0,data.value("output_tokens").toInteger());cooldownUntil_=qMin(data.value("cooldown_until_ms").toInteger(),now()+3600000);lastError_=data.value("error_kind").toString().isEmpty()?QString():"上一轮模型服务返回 429，请等待冷却或检查服务商账户。";lastErrorKind_=data.value("error_kind").toString();}resetDay();}
+bool AiStatusChat::saveUsage(){if(config_.usageFile.isEmpty())return true;QDir().mkpath(QFileInfo(config_.usageFile).absolutePath());QSaveFile file(config_.usageFile);const auto bytes=QJsonDocument(QJsonObject{{"day",usageDay_},{"calls",dailyRequested_},{"input_tokens",inputTokens_},{"output_tokens",outputTokens_},{"cooldown_until_ms",cooldownUntil_},{"error_kind",lastErrorKind_}}).toJson(QJsonDocument::Compact);return file.open(QIODevice::WriteOnly)&&file.write(bytes)==bytes.size()&&file.commit();}
+QJsonObject AiStatusChat::status()const{return {{"enabled",config_.enabled},{"configured",config_.valid()},{"provider",config_.provider},{"model",config_.model},{"pending",jobs_.size()},{"sessions",sessions_.size()},{"requested",static_cast<qint64>(requested_)},{"replied",static_cast<qint64>(replied_)},{"failed",static_cast<qint64>(failed_)},{"day",usageDay_},{"daily_calls",dailyRequested_},{"daily_limit",config_.dailyLimit},{"input_tokens",inputTokens_},{"output_tokens",outputTokens_},{"last_http",lastHttp_},{"last_error",lastError_},{"error_kind",lastErrorKind_},{"cooldown_seconds",qMax<qint64>(0,(cooldownUntil_-now()+999)/1000)},{"max_tokens",config_.maxTokens},{"timeout_seconds",config_.timeoutMs/1000}};}

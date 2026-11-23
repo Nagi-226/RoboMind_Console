@@ -23,9 +23,22 @@ AI 完整回答返回原 LanChat 会话，不回传到容量有限的 S3 收件�
 
 - `anthropic`：基地址自动补 `/v1/messages`；支持 DeepSeek Anthropic 兼容接口，发送 Bearer 认证和 `anthropic-version: 2023-06-01`。
 - `openai`：基地址自动补 `/v1/chat/completions`，发送 Bearer 认证。
+- OpenAI 兼容渠道可选 `ROBOMIND_AI_REASONING_EFFORT` / LanChat 的“思考强度”；为空不发送，仅 OpenAI 请求带该可选字段。商汤 `https://token.sensenova.cn/v1` / `deepseek-flash` 使用 none 已通过真实接口与真实 LanChat 服务端的单次回复验证；官方标注模型为 DeepSeek V4.1 Flash 1017。通用知识问题可回答，真实设备状态仍经原快照校验。
 - 远端要求 HTTPS；本机 `localhost` / loopback 可使用 HTTP 连接本地模型。重定向不自动携带密钥继续请求。
 - 密钥由 LanChat 使用当前 Windows 用户 DPAPI 加密保存，仅通过子进程环境交给 Console，不写入桥 INI、状态快照或日志。安装包不含用户密钥。
-- 每个问题最多 2048 字节，回答最多 4096 字节；每次最多 1200 个输出 token。达到模型输出上限时明确提示可继续追问。模型接口总超时 45 秒，失败不自动重试付费请求。
+- 每个问题最多 2048 字节，回答最多 4096 字节；默认每次 1200 个输出 token / 45 秒，可由 LanChat 设置调整。达到模型输出上限时明确提示可继续追问，失败不自动重试付费请求。
+
+### 调用限额与 429
+
+LanChat 登录后 **设置 → AI 与会话** 配置输出 token、超时、每日调用次数、全局间隔和最大并发；默认每日 100 次 / 间隔 2 秒 / 最大 4 个任务，每会话仍最多一个。失败计入次数，计数在生成请求前保存到本机 `ai-usage.json`，跨日恢复、重启保留；该文件无密钥或对话。输入 / 输出 token 使用响应 usage，本机统计不代表余额或账单。
+
+HTTP 429 根据提供方错误分类为限流 / 额度不足 / 原因不明确，正文不直接回传。遵守 Retry-After 秒数 / HTTP 日期，缺省 60 秒，限制 1–3600 秒；冷却落盘、重启保留，不自动重试。冷却和次数上限不影响原设备 / 日志查询。旧 21:30 记录没有保留服务商错误详情，不能据此确定额度或频率原因。
+
+2026-11-23 本机部署 2026.11.23.2 后，最新生产状态将 `deepseek-flash` 的 429 归类为 `rate_limit`，提示暂停 60 秒；复核时冷却已结束。服务商具体限流规则尚未确认；模型列表 GET 成功不代表生成请求已恢复，目前没有新的成功生成记录。本轮没有主动重发生产生成请求。
+
+下一次按用户决定改用自己的 DeepSeek 官方 API；已有 OpenAI 兼容接口可配置该渠道，但模型 ID、权限和真实回答仍需联调。先使用模型默认思考配置，本轮没有切换生产凭据或进行官方 API 调用。鲸鱼娘角色与语音继续待办。
+
+独立运行可设 `ROBOMIND_AI_MAX_TOKENS`、`ROBOMIND_AI_TIMEOUT_SECONDS`、`ROBOMIND_AI_DAILY_LIMIT`（0=不限）、`ROBOMIND_AI_INTERVAL_SECONDS`、`ROBOMIND_AI_CONCURRENCY`、`ROBOMIND_AI_USAGE_FILE`。测试使用隔离目录，避免修改生产计数。新回归 `tools/test_ai_limits.py` 全部使用本机模拟接口，不产生模型费用。
 - 全局最多 4 个回答任务，同会话最多 1 个；同会话至少间隔 2 秒。费用随提供方和实际使用量计算，当前没有账户级金额上限。
 - 模型上下文仅留 Console 内存，最多三轮 / 8 KiB；10 分钟无活动过期，最多约 16 个会话。群内按发送者隔离，不共享私聊上下文。
 - **LanChat 聊天记录仍按既有规则持久化**，清空模型上下文不会删除聊天记录。
