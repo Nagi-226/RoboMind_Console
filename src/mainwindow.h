@@ -23,6 +23,7 @@ class LanChatSink;
 class DisplayBridge;
 class StatusQuery;
 class BoardLogs;
+class AiStatusChat;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -53,6 +54,7 @@ private:
     DisplayBridge* display_{nullptr};
     StatusQuery* queries_{nullptr};
     BoardLogs* logs_{nullptr};
+    AiStatusChat* ai_{nullptr};
 
     QLabel*       conn_label_{nullptr};
     QLabel*       sink_label_{nullptr};

@@ -92,6 +92,7 @@ add_executable(robomind-console WIN32
     src/display_bridge.cpp src/display_bridge.h
     src/status_query.cpp src/status_query.h
     src/board_logs.cpp src/board_logs.h
+    src/ai_status_chat.cpp src/ai_status_chat.h
 )
 target_link_libraries(robomind-console PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort

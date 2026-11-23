@@ -43,6 +43,17 @@ void StatusQuery::reply(const QJsonObject& original,const QString& kind,const QS
     const QString text=QString("[S3 · %1 · #%2]\n%3").arg(title(kind),original.value("msg_id").toVariant().toString(),body);
     if(sink_->sendReply(original,text))++replied_;
 }
+bool StatusQuery::recognizes(const QJsonObject& message){return !recognize(message.value("msg").toString(),message.value("type").toInt()==17).isEmpty();}
+void StatusQuery::complete(const Pending& pending,const QString& body){
+    if(pending.completed)pending.completed(body);else reply(pending.original,pending.kind,body);
+}
+void StatusQuery::snapshot(const QString& kind,std::function<void(const QString&)> completed){
+    if(kind!="perception"&&kind!="link"&&kind!="device"){completed("不支持此状态查询。");return;}
+    if(!state_().value("board_connected").toBool()){completed("板端离线，当前快照不可用。");return;}
+    if(pending_.size()>=16){completed("查询繁忙，当前快照不可用。");return;}
+    const QString token=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    pending_.insert(token,Pending{{},kind,now(),0,std::move(completed)});tick();
+}
 void StatusQuery::consume(const QJsonObject& message){
     const int type=message.value("type").toInt(),sender=message.value("fromId").toInt();
     if((type!=6&&type!=17)||sender<1||message.value("content_type").toString("text")!="text"||message.contains("attachment"))return;
@@ -63,7 +74,7 @@ void StatusQuery::consume(const QJsonObject& message){
         reply(original,kind,logReply_?logReply_(filter):"日志采集未启用，尚无可用缓存。");return;
     }
     if(kind=="help"){
-        reply(original,kind,"私聊：感知 / 链路 / 设备 / 帮助\n群聊：/感知 /链路 /设备 /帮助\n日志：/日志、/日志 错误、/日志 链路、/日志 帮助\n支持有限同义词，如感知状态、网络、设备状态。\n只读取真实状态；当前不支持自由对话或控制设备。\n原查询文字的板端显示回执与本查询回复分别记录。");return;
+        reply(original,kind,"私聊：感知 / 链路 / 设备 / 帮助\n群聊：/感知 /链路 /设备 /帮助\n日志：/日志、/日志 错误、/日志 链路、/日志 帮助\n启用 AI 后，私聊可直接自然提问；群聊使用 /AI 问题。\n/AI 清空：清除当前会话的 AI 上下文。只读问答，不执行设备控制。\n原查询文字的板端显示回执与本查询回复分别记录。");return;
     }
     const auto state=state_();
     if(!state.value("board_connected").toBool()){reply(original,kind,(kind=="link"?linkSummary()+"\n":"")+"板端离线，当前快照不可用。");return;}
@@ -73,15 +84,17 @@ void StatusQuery::consume(const QJsonObject& message){
 }
 void StatusQuery::tick(){
     const auto timestamp=now();const auto state=state_();
+    QList<QPair<Pending,QString>> finished;
     for(auto it=pending_.begin();it!=pending_.end();){
         QString error;
         if(!state.value("board_connected").toBool())error="板端离线，查询中断。";
         else if(timestamp-it->created>=5000){error="查询超时，未收到当前快照。";++timeouts_;}
         else if(display_->status().value("terminal_ready").toBool()&&!display_->status().value("query_supported").toBool())error="当前板端固件不支持状态查询，请更新固件。";
-        if(!error.isEmpty()){reply(it->original,it->kind,(it->kind=="link"?linkSummary()+"\n":"")+error);it=pending_.erase(it);continue;}
+        if(!error.isEmpty()){finished.append({it.value(),(it->kind=="link"?linkSummary()+"\n":"")+error});it=pending_.erase(it);continue;}
         if(timestamp-it->sent>=1000&&display_->requestStatus(it.key(),it->kind))it->sent=timestamp;
         ++it;
     }
+    for(const auto& item:finished)complete(item.first,item.second);
 }
 void StatusQuery::receive(const QString& payload){
     if(payload.toUtf8().size()>512){++invalid_;return;}
@@ -97,7 +110,7 @@ void StatusQuery::receive(const QString& payload){
     if(now()-it->created>=5000){tick();return;}
     const QString body=format(it->kind,values);
     if(body.isEmpty()){++invalid_;return;}
-    reply(it->original,it->kind,body);pending_.erase(it);
+    const auto pending=it.value();pending_.erase(it);complete(pending,body);
 }
 QString StatusQuery::format(const QString& kind,const QHash<QString,QString>& v)const{
     bool valid=true;

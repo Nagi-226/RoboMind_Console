@@ -19,6 +19,7 @@
 #include "display_bridge.h"
 #include "status_query.h"
 #include "board_logs.h"
+#include "ai_status_chat.h"
 #include <QStandardPaths>
 
 namespace {
@@ -106,7 +107,10 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
     queries_=new StatusQuery(sink_,display_,[this]{return bridgeStatus();},this);
     logs_=new BoardLogs(logDirectory.isEmpty()?QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/board-logs":logDirectory,this);
     queries_->setLogReply([this](const QString& filter){return logs_->reply(filter);});
-    connect(sink_,&LanChatSink::messageReceived,this,[this](const QJsonObject& message){queries_->consume(message);});
+    ai_=new AiStatusChat(sink_,queries_,[this]{return bridgeStatus();},this);
+    connect(sink_,&LanChatSink::messageReceived,this,[this](const QJsonObject& message){
+        if(StatusQuery::recognizes(message))queries_->consume(message);else ai_->consume(message);
+    });
     connect(sink_, &LanChatSink::stateChanged, this, [this](const QString& s) {
         sink_label_->setText(QString("LanChat: %1").arg(s));
         display_->setLanChatConnected(s == "已登录");
@@ -316,6 +320,7 @@ QJsonObject MainWindow::bridgeStatus() const
             {"lanchat_state", sink_->stateText()},
             {"display", display_->status()},
             {"logs", logs_ ? logs_->status() : QJsonObject()},
+            {"ai", ai_ ? ai_->status() : QJsonObject()},
             {"queries", queries_ ? queries_->status() : QJsonObject()}};
 }
 

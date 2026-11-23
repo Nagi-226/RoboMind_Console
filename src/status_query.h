@@ -12,10 +12,13 @@ class StatusQuery : public QObject {
 public:
     StatusQuery(LanChatSink* sink,DisplayBridge* display,std::function<QJsonObject()> state,QObject* parent=nullptr);
     void consume(const QJsonObject& message);
+    static bool recognizes(const QJsonObject& message);
+    void snapshot(const QString& kind, std::function<void(const QString&)> completed);
     QJsonObject status() const;
     void setLogReply(std::function<QString(const QString&)> reader) { logReply_ = std::move(reader); }
 private:
-    struct Pending { QJsonObject original; QString kind; qint64 created=0,sent=0; };
+    struct Pending { QJsonObject original; QString kind; qint64 created=0,sent=0; std::function<void(const QString&)> completed; };
+    void complete(const Pending& pending, const QString& body);
     void tick();
     void receive(const QString& payload);
     void reply(const QJsonObject& original,const QString& kind,const QString& body);
