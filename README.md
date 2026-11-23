@@ -4,7 +4,7 @@
 
 这是个人独立项目中的配套工具。感知决策由 PPM 承担；Console 负责通信、展示和操作。
 
-> 当前状态：2026-11-22。群发告警、终端下行桥、PC 附件隔离与四项只读查询均已完成初版；LanChat 集成时 Console 在后台运行，操作面板展示在 LanChat 主窗口中。外部模型 API 仍为待办。
+> 当前状态：2026-11-23。群发告警、终端下行桥、PC 附件隔离、四项只读查询与 USB 板端日志均已完成初版；LanChat 集成时 Console 在后台运行，操作面板展示在 LanChat 主窗口中。外部模型 API 仍为待办。
 
 ## 当前功能
 
@@ -96,7 +96,7 @@ ROBOMIND_LANCHAT_PASSWORD    该账号密码
 
 ## 构建与部署
 
-依赖 Qt6、MinGW、CMake / Ninja 和本地 Virtual-Vehicle-OS 仓库。
+依赖 Qt6（含 SerialPort）、MinGW、CMake 3.22+ / Ninja 和本地 Virtual-Vehicle-OS 仓库。
 
 ```powershell
 $env:PATH = 'D:\Qt\Tools\mingw1310_64\bin;D:\Qt\6.10.3\mingw_64\bin;' + $env:PATH
@@ -166,6 +166,29 @@ M1 / M2 / M3 的历史验收、图标排错和旧资源数据可查 [此前 READ
 LanChat Qt 已实现 PC 间图片、GIF 和文件传输。Console 的 LanChatSink 与 DisplayBridge 两层入口仅允许 text，拒绝 image/file/sticker 及任何 attachment 字段；这些内容不下发容量有限的 S3。原有中文文字、群/私聊告警、显示回执和页面控制保留。
 
 独立验证 `python tools/test_display_bridge.py` 增加非文字及附件伪装用例。PC 分发与共享主机操作见 [LanChat 局域网部署](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/lan-deployment.md)。本轮无需修改或烧录 S3 固件。
+
+## USB 板端运行日志（2026-11-23）
+
+LanChat 本体的 **板端连接 → 运行日志** 使用此桥的独立串口线程，读取板端现有 ESP_LOG 与 printf。选择实际 USB Serial/JTAG 端口并开始采集；本机为 COM3、115200，无需修改或烧录 S3。停止采集释放端口；占用、断开和停采保留历史，端口不可用时每 2 秒重试。
+
+所有展示、滚动文件、复制、导出和聊天查询共用脱敏缓存。单行最多 2 KiB；缓存最多 2,000 行 / 4 MiB，历史 5 MiB × 4。快照使用独立的 `logs/logs.snapshot.json`，桥 `status.json` 只增加日志状态 / 计数。日志来源会话与端口逐行记录；时间为 PC 接收时间。采集前、断开或驱动丢失的输出无法补取。
+
+`/日志`、`/日志 错误`、`/日志 链路`、`/日志 帮助` 在专用账号私聊和配置群中完整匹配，沿用原会话路由、判重、750 ms 限流和自身 / 附件过滤。默认返回最多 20 条、排除 hex，单次总回复最多 6 KiB；采集不可用时明确标记历史，没记录不等于板端正常。聊天命令只查询，不控制串口或板子。
+
+USB 实时面板仅在连接板子的主机使用。其他 PC 可经 LanChat 查询片段；纯 Wi-Fi 事件上行与远程连续订阅留后续。Console 自身账号日志不作为板端日志来源，数据不进入安装包。Qt SerialPort SDK 必须与 Qt/编译器版本匹配；部署需包含 `Qt6SerialPort.dll`。
+
+复现检查（使用临时账号和数据库）：
+
+```powershell
+cmake --build build --target board-log-check robomind-console deploy
+ctest --test-dir build -R '^board_logs$' --output-on-failure
+python tools/test_status_queries.py
+python tools/test_board_logs.py --server '../LanChat-Next/build/server-mingw/src/server/lanchat_server_next.exe' --port COM3
+```
+
+`board-log-check` 覆盖逐字节 UTF-8 / ANSI、printf、脱敏、超长恢复、有界缓存和停采。真实 COM3 检查覆盖服务端私聊 / 群路由、原消息 ID、回复上限、停采后的历史、端口占用与恢复、文件轮换。Qt 本体页另有 `board_logs` 测试与可选 `--qt-probe` 真板验收入口。
+
+2026-11-23 实测：上述检查通过；安装包内 Console / Qt 运行库完成实际 USB 采集与本体页单次聊天回复，隔离账号 / 数据库中采集 44 行。没有用模拟日志替代真板证据。当前固件和 PPM 数据生产路径未修改；直接 USB 读取不增加 S3 运行内存。
 
 ## 查询反馈与下一步（2026-11-22）
 

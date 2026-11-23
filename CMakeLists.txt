@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.22)
 project(RoboMindConsole VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -28,8 +28,17 @@ add_subdirectory("${VVOS_ROOT}" vvos_build)
 # ---------------------------------------------------------------------------
 # Qt
 # ---------------------------------------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort)
 set(CMAKE_AUTOMOC ON)
+
+add_executable(board-log-check tools/board_log_check.cpp src/board_logs.cpp src/board_logs.h)
+target_include_directories(board-log-check PRIVATE src)
+target_link_libraries(board-log-check PRIVATE Qt6::Core Qt6::SerialPort)
+enable_testing()
+add_test(NAME board_logs COMMAND board-log-check)
+get_target_property(_log_qmake Qt6::qmake IMPORTED_LOCATION)
+get_filename_component(_log_qt_bin "${_log_qmake}" DIRECTORY)
+set_tests_properties(board_logs PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_log_qt_bin}")
 
 # ---------------------------------------------------------------------------
 # M2 · selfcheck（控制台程序）
@@ -82,9 +91,10 @@ add_executable(robomind-console WIN32
     src/lanchat_sink.cpp src/lanchat_sink.h
     src/display_bridge.cpp src/display_bridge.h
     src/status_query.cpp src/status_query.h
+    src/board_logs.cpp src/board_logs.h
 )
 target_link_libraries(robomind-console PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort
     vr_base_framework
 )
 target_include_directories(robomind-console PRIVATE "${VVOS_ROOT}/src")

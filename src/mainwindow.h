@@ -22,14 +22,16 @@ class QTcpSocket;
 class LanChatSink;
 class DisplayBridge;
 class StatusQuery;
+class BoardLogs;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(quint16 port, QWidget* parent = nullptr);
+    explicit MainWindow(quint16 port, QWidget* parent = nullptr, const QString& logDirectory = {});
     QJsonObject bridgeStatus() const;
     bool navigateBoard(const QString& id,const QString& action);
+    void setLogCapture(bool enabled,const QString& port);
 
 private slots:
     void OnNewConnection();
@@ -50,6 +52,7 @@ private:
     LanChatSink*  sink_{nullptr};
     DisplayBridge* display_{nullptr};
     StatusQuery* queries_{nullptr};
+    BoardLogs* logs_{nullptr};
 
     QLabel*       conn_label_{nullptr};
     QLabel*       sink_label_{nullptr};

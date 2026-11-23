@@ -24,12 +24,14 @@ int main(int argc, char** argv)
     bool bridge = false;
     QString statusFile;
     QString stopFile;
+    QString logPort;
     int durationMs = 0;
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
         if (arg == "--bridge") bridge = true;
         else if (arg == "--status-file" && i + 1 < argc) statusFile = QString::fromLocal8Bit(argv[++i]);
         else if (arg == "--stop-file" && i + 1 < argc) stopFile = QString::fromLocal8Bit(argv[++i]);
+        else if (arg == "--log-port" && i + 1 < argc) logPort = QString::fromLocal8Bit(argv[++i]);
         else if (arg == "--duration-ms" && i + 1 < argc) durationMs = QString::fromLocal8Bit(argv[++i]).toInt();
         else if (arg == "--port" && i + 1 < argc) {
             bool ok = false;
@@ -46,7 +48,8 @@ int main(int argc, char** argv)
         }
     }
 
-    MainWindow window(port);
+    MainWindow window(port,nullptr,statusFile.isEmpty()?QString():QFileInfo(statusFile).absolutePath()+"/logs");
+    if(!logPort.isEmpty())window.setLogCapture(true,logPort);
     if (!bridge) window.show();
     else app.setQuitOnLastWindowClosed(false);
     // 文件快照避免 WIN32 子系统 stdout 丢失；只暴露链路状态，不含凭据/私有载荷。
@@ -58,6 +61,13 @@ int main(int argc, char** argv)
             return;
         }
         if (!statusFile.isEmpty()) {
+            QFile logRequest(QFileInfo(statusFile).absolutePath()+"/logs.request");
+            if(logRequest.exists()&&logRequest.size()<=512&&logRequest.open(QIODevice::ReadOnly)){
+                const auto command=QJsonDocument::fromJson(logRequest.readAll()).object();logRequest.close();logRequest.remove();
+                const qint64 age=QDateTime::currentMSecsSinceEpoch()-command.value("created_ms").toInteger();
+                const QString action=command.value("action").toString(),port=command.value("port").toString();
+                if(age>=0&&age<5000&&(action=="stop"||(action=="start"&&!port.isEmpty()&&port.size()<=64)))window.setLogCapture(action=="start",port);
+            }
             QFile request(QFileInfo(statusFile).absolutePath() + "/navigation.request");
             if(request.exists()&&request.size()<=512&&request.open(QIODevice::ReadOnly)){
                 const auto command=QJsonDocument::fromJson(request.readAll()).object();request.close();request.remove();

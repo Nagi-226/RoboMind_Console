@@ -18,6 +18,8 @@
 #include "lanchat_sink.h"
 #include "display_bridge.h"
 #include "status_query.h"
+#include "board_logs.h"
+#include <QStandardPaths>
 
 namespace {
 
@@ -80,7 +82,7 @@ QFrame* MakeCard(const QString& title, const QString& hint, QLabel** value_out)
 
 }  // namespace
 
-MainWindow::MainWindow(quint16 port, QWidget* parent)
+MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirectory)
     : QMainWindow(parent), port_(port)
 {
     BuildUi();
@@ -102,6 +104,8 @@ MainWindow::MainWindow(quint16 port, QWidget* parent)
     display_ = new DisplayBridge(this);
     connect(sink_, &LanChatSink::messageReceived, display_, &DisplayBridge::enqueue);
     queries_=new StatusQuery(sink_,display_,[this]{return bridgeStatus();},this);
+    logs_=new BoardLogs(logDirectory.isEmpty()?QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/board-logs":logDirectory,this);
+    queries_->setLogReply([this](const QString& filter){return logs_->reply(filter);});
     connect(sink_,&LanChatSink::messageReceived,this,[this](const QJsonObject& message){queries_->consume(message);});
     connect(sink_, &LanChatSink::stateChanged, this, [this](const QString& s) {
         sink_label_->setText(QString("LanChat: %1").arg(s));
@@ -295,6 +299,7 @@ void MainWindow::OnDisconnected()
 }
 
 bool MainWindow::navigateBoard(const QString& id,const QString& action){return display_->navigate(id,action);}
+void MainWindow::setLogCapture(bool enabled,const QString& port){if(enabled)logs_->start(port);else logs_->stop();}
 QJsonObject MainWindow::bridgeStatus() const
 {
     return {{"updated_ms", QDateTime::currentMSecsSinceEpoch()},
@@ -310,6 +315,7 @@ QJsonObject MainWindow::bridgeStatus() const
             {"source", last_source_},
             {"lanchat_state", sink_->stateText()},
             {"display", display_->status()},
+            {"logs", logs_ ? logs_->status() : QJsonObject()},
             {"queries", queries_ ? queries_->status() : QJsonObject()}};
 }
 

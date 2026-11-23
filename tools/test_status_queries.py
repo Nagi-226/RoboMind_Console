@@ -9,6 +9,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix='s3-query-') as directory:
         folder = pathlib.Path(directory)
         status, stop = folder/'status.json', folder/'stop.request'
+        # 独立准备历史数据，确认日志查询走 PC 缓存，板端离线也能明确回复历史。
+        (folder/'logs').mkdir()
+        seed=[{'seq':i,'received_ms':int(time.time()*1000),'level':'E' if i%3==0 else 'I',
+               'module':'wifi' if i%2 else 'camera','text':'中文日志 '+('x'*1800),'wire':False} for i in range(1,36)]
+        seed += [{'seq':36,'received_ms':int(time.time()*1000),'level':'RAW','module':'wire','text':'hidden-hex','wire':True},
+                 {'seq':37,'received_ms':int(time.time()*1000),'level':'W','module':'wifi','text':'password=hide-secret','wire':False}]
+        (folder/'logs'/'logs.snapshot.json').write_text(json.dumps({'rows':seed},ensure_ascii=False),encoding='utf-8')
         lan = socket.socket(); lan.bind(('127.0.0.1', 0)); lan.listen(); lan.settimeout(8)
         probe = socket.socket(); probe.bind(('127.0.0.1', 0)); board_port=probe.getsockname()[1]; probe.close()
         (folder/'robomind-console.ini').write_text(f'[lanchat]\nenabled=true\nhost=127.0.0.1\nport={lan.getsockname()[1]}\ngroup_id=77\nreceive_messages=true\n')
@@ -47,6 +54,13 @@ def main():
                 assert str(original['msg_id']) in body['msg'],body
                 return body
             reply(ask('帮助'),'感知')
+            wait(lambda:snapshot().get('logs',{}).get('count')==37)
+            log=reply(ask('/日志'),'历史缓存')['msg']
+            assert len(log.encode('utf-8'))<=6144 and 'hidden-hex' not in log and 'hide-secret' not in log
+            assert '已截断' in log and '\ufffd' not in log
+            reply(ask('/日志 错误'),'camera')
+            reply(ask('/日志 链路',group=True),'wifi')
+            reply(ask('/日志 帮助'),'不通过聊天控制采集')
             reply(ask('链路'),'离线')
             reply(ask('感知'),'离线')
             board=socket.create_connection(('127.0.0.1',board_port));board.settimeout(8)
@@ -81,6 +95,7 @@ def main():
             before=len(requests)
             ask('/帮助',group=True,id=original['msg_id'],extra={'fromId':original['fromId']})
             ask('讨论一下感知算法');ask('感知',group=True)
+            ask('日志');ask('讨论一下/日志');ask('/日志',group=True,extra={'groupId':78})
             ask('帮助',extra={'fromId':4242});ask('帮助',extra={'content_type':'file','attachment':{}})
             time.sleep(.4)
             assert results.empty() and len(requests)==before,'duplicate, normal text, self or attachment triggered'

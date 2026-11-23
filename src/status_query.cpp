@@ -9,10 +9,13 @@
 
 namespace {
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
-QString title(const QString& kind){return kind=="perception"?"感知":kind=="link"?"链路":kind=="device"?"设备":"帮助";}
+QString title(const QString& kind){return kind.startsWith("logs")?"日志":kind=="perception"?"感知":kind=="link"?"链路":kind=="device"?"设备":"帮助";}
 bool identifier(const QString& value){static const QRegularExpression expression("^[A-Za-z0-9_.-]{1,63}$");return expression.match(value).hasMatch();}
 QString recognize(QString text,bool group){
     text=text.normalized(QString::NormalizationForm_KC).trimmed().toLower();
+    // 日志内容较多，只接受明确命令，私聊中的普通“日志”也不触发。
+    const QHash<QString,QString> logs={{"/日志","logs"},{"/日志 错误","logs_error"},{"/日志 链路","logs_link"},{"/日志 帮助","logs_help"}};
+    if(logs.contains(text))return logs.value(text);
     if(group&&!text.startsWith('/'))return {};
     if(text.startsWith('/'))text.remove(0,1);
     const QHash<QString,QString> aliases={{"感知","perception"},{"感知状态","perception"},{"perception","perception"},
@@ -55,8 +58,12 @@ void StatusQuery::consume(const QJsonObject& message){
         return;
     }
     users_.insert(user,timestamp);++requested_;
+    if(kind.startsWith("logs")){
+        const QString filter=kind=="logs_error"?"error":kind=="logs_link"?"link":kind=="logs_help"?"help":"all";
+        reply(original,kind,logReply_?logReply_(filter):"日志采集未启用，尚无可用缓存。");return;
+    }
     if(kind=="help"){
-        reply(original,kind,"私聊：感知 / 链路 / 设备 / 帮助\n群聊：/感知 /链路 /设备 /帮助\n支持有限同义词，如感知状态、网络、设备状态。\n只读取真实状态；当前不支持自由对话或控制设备。\n原查询文字的板端显示回执与本查询回复分别记录。");return;
+        reply(original,kind,"私聊：感知 / 链路 / 设备 / 帮助\n群聊：/感知 /链路 /设备 /帮助\n日志：/日志、/日志 错误、/日志 链路、/日志 帮助\n支持有限同义词，如感知状态、网络、设备状态。\n只读取真实状态；当前不支持自由对话或控制设备。\n原查询文字的板端显示回执与本查询回复分别记录。");return;
     }
     const auto state=state_();
     if(!state.value("board_connected").toBool()){reply(original,kind,(kind=="link"?linkSummary()+"\n":"")+"板端离线，当前快照不可用。");return;}

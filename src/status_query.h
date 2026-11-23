@@ -13,6 +13,7 @@ public:
     StatusQuery(LanChatSink* sink,DisplayBridge* display,std::function<QJsonObject()> state,QObject* parent=nullptr);
     void consume(const QJsonObject& message);
     QJsonObject status() const;
+    void setLogReply(std::function<QString(const QString&)> reader) { logReply_ = std::move(reader); }
 private:
     struct Pending { QJsonObject original; QString kind; qint64 created=0,sent=0; };
     void tick();
@@ -23,6 +24,7 @@ private:
     LanChatSink* sink_;
     DisplayBridge* display_;
     std::function<QJsonObject()> state_;
+    std::function<QString(const QString&)> logReply_;
     QHash<QString,Pending> pending_;
     QHash<QString,qint64> processed_,users_,throttled_;
     QTimer timer_;
