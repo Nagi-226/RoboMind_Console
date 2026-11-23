@@ -48,6 +48,8 @@ HTTP 429 根据提供方错误分类为限流 / 额度不足 / 原因不明确�
 
 ## 验证
 
+2026.11.23.2 完整安装包在移除开发 Qt PATH 后，使用安装目录 Console 完成 Anthropic / OpenAI 两种模拟器检查；安装、重复安装、卸载和个人文件保留通过。对应 LanChat / Console 功能提交为 `61f4ec9` / `e00eba7`，详细产物与证据见 [LanChat 发布记录](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/windows-release-20261123.md)。本次发布没有新增付费生成或实板验收。
+
 ```powershell
 py -3.12 tools/test_ai_status_chat.py
 # 指定安装目录中的 Console，核对随包运行库与两种接口
