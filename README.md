@@ -4,7 +4,7 @@
 
 这是个人独立项目中的配套工具。感知决策由 PPM 承担；Console 负责通信、展示和操作。
 
-> 当前状态：2026-11-23。群发告警、终端下行桥、PC 附件隔离、四项只读查询与 USB 板端日志均已完成初版；LanChat 集成时 Console 在后台运行，操作面板展示在 LanChat 主窗口中。外部模型 API 仍为待办。
+> 当前状态：2026-11-23。群发告警、终端下行桥、PC 附件隔离、四项只读查询与 USB 板端日志均已完成初版，日志采集和聊天查询已合入 master 并推送；LanChat 集成时 Console 在后台运行，操作面板展示在 LanChat 主窗口中。外部模型 API 仍为待办。
 
 ## 当前功能
 
@@ -16,6 +16,7 @@
 | 投递状态 | 有界队列、TTL、重试 / 判重，以及 accepted / rendered / rejected / expired 状态 |
 | 页面控制 | 总览 / 收件箱 / PPM / VVOS / 设备，以及详情、滚动、本地已读、中英文切换 |
 | 关键词查询 | 感知 / 链路 / 设备 / 帮助；有界请求、状态校验、按原私聊 / 配置群回复、离线 / 超时 / 限流 |
+| USB 运行日志 | 独立串口线程、UTF-8 / ANSI 分行、脱敏有界缓存与滚动历史；四种 `/日志` 命令在原会话回复 |
 | 后台桥 | 本机原子状态文件和页面请求；Windows 临时读锁写入失败可重试 |
 | 独立验证 | selfcheck、framecheck、无窗口接收工具和独立假服务端下行测试 |
 
@@ -110,7 +111,7 @@ cmake --build build --target robomind-console deploy
 
 **正式 GUI 产物始终是 `build/dist/RoboMindConsole.exe`。** `deploy` 将 Qt DLL / plugins 放到 exe 旁；分发应包含整个目录。
 
-`VVOS_ROOT` 是路径依赖，不是版本锁。本轮配套验证使用 VVOS `e2c2b2a`、S3 `7ad1629`、LanChat `088f4d1`。搬目录时重新配置 cache 或使用新的构建目录；只改路径变量不能假定旧 cache 已更新。
+`VVOS_ROOT` 是路径依赖，不是版本锁。2026-11-21 配套验证基线为 VVOS `e2c2b2a`、S3 `7ad1629`、LanChat `088f4d1`；2026-11-23 主分支更新见下文。搬目录时重新配置 cache 或使用新的构建目录；只改路径变量不能假定旧 cache 已更新。
 
 ## 验证与已知边界
 
@@ -139,7 +140,7 @@ py tools/test_display_bridge.py
 - 板端正文最多 **384 字节 UTF-8**、最多 **8 条**收件；PC 图片 / 文件传输扩展使用独立附件通道。
 - 当前仅一个活动板端连接，未验收多板 / 多 Console 协同。
 - S3 触摸未实现，当前页面操作来自 PC；字体 / 背光 / 颜色仍需物理屏幕目检。
-- LanChat 服务端必要修复已随 PC LAN 初版提交（`f93288a`）；最新客户端功能基线为 `df4e67a`。当前聊天 TCP 尚无 TLS，适用于可信 LAN 或加密组网。
+- LanChat 服务端必要修复已随 PC LAN 初版提交（`f93288a`）；当前客户端日志与窗口功能提交为 `e99ab22`。当前聊天 TCP 尚无 TLS，适用于可信 LAN 或加密组网。
 
 ## 协议与目录
 
@@ -189,6 +190,14 @@ python tools/test_board_logs.py --server '../LanChat-Next/build/server-mingw/src
 `board-log-check` 覆盖逐字节 UTF-8 / ANSI、printf、脱敏、超长恢复、有界缓存和停采。真实 COM3 检查覆盖服务端私聊 / 群路由、原消息 ID、回复上限、停采后的历史、端口占用与恢复、文件轮换。Qt 本体页另有 `board_logs` 测试与可选 `--qt-probe` 真板验收入口。
 
 2026-11-23 实测：上述检查通过；安装包内 Console / Qt 运行库完成实际 USB 采集与本体页单次聊天回复，隔离账号 / 数据库中采集 44 行。没有用模拟日志替代真板证据。当前固件和 PPM 数据生产路径未修改；直接 USB 读取不增加 S3 运行内存。
+
+## 2026-11-23 主分支更新
+
+日志初版从 `codex/board-runtime-logs` 快进合入 master 并推送：Console [`aebe932`](https://github.com/Nagi-226/RoboMind_Console/commit/aebe9323503ff1f9f7d47f4f61aea1a7f6d413b1)、LanChat [`e99ab22`](https://github.com/Nagi-226/LanChat-Next/commit/e99ab220e63e58bc0abcd43654ac1033f58b8aad)。S3 沿用 `7e6d195`，本轮日志不需要固件变更。
+
+本次合入前，缓存检查、状态查询回归和真实 LanChat 服务端的日志私聊 / 群回复检查通过，使用临时账号与历史缓存；此前 COM3 实板证据保留，不把此次历史缓存检查写成新的 USB 验收。LanChat Qt 14/14 通过，支持日志页自动跟随及统一窗口图标；实际拖拽吸附、Snap 悬停和多屏仍待实机确认。
+
+运行日志页的展示与操作见 [LanChat README 界面预览](https://github.com/Nagi-226/LanChat-Next#界面预览)，图片明确为示例日志。Console 自身继续作为后台采集与通信桥。
 
 ## 查询反馈与下一步（2026-11-22）
 
