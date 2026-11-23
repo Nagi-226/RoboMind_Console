@@ -16,7 +16,7 @@ from test_display_bridge import packet, envelope, receive, wait
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def run(provider):
+def run(provider, console=None):
     calls = []
     mode = ['ok']
     class Model(http.server.BaseHTTPRequestHandler):
@@ -48,7 +48,8 @@ def run(provider):
         env.update(ROBOMIND_LANCHAT_USER_ID='4242', ROBOMIND_LANCHAT_PASSWORD='isolated-password',
                    ROBOMIND_AI_ENABLED='1', ROBOMIND_AI_PROVIDER=provider, ROBOMIND_AI_ENDPOINT=f'http://127.0.0.1:{model.server_port}',
                    ROBOMIND_AI_MODEL='fixture-model', ROBOMIND_AI_KEY='isolated-ai-key')
-        proc = subprocess.Popen([str(ROOT/'build/dist/RoboMindConsole.exe'), '--bridge', '--port', str(board_port), '--status-file', str(status), '--stop-file', str(stop)], cwd=folder, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        executable = pathlib.Path(console).resolve() if console else ROOT/'build/dist/RoboMindConsole.exe'
+        proc = subprocess.Popen([str(executable), '--bridge', '--port', str(board_port), '--status-file', str(status), '--stop-file', str(stop)], cwd=folder, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         results = queue.Queue(); failures = []; requests = []; stale = threading.Event()
         chat = board = None
         try:
@@ -148,5 +149,5 @@ def run(provider):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(); parser.add_argument('--provider', choices=['anthropic', 'openai', 'both'], default='both'); args = parser.parse_args()
-    for provider in ('anthropic', 'openai') if args.provider == 'both' else (args.provider,): run(provider)
+    parser = argparse.ArgumentParser(); parser.add_argument('--provider', choices=['anthropic', 'openai', 'both'], default='both'); parser.add_argument('--console', help='Console executable to test, including an installed copy'); args = parser.parse_args()
+    for provider in ('anthropic', 'openai') if args.provider == 'both' else (args.provider,): run(provider, args.console)

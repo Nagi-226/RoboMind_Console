@@ -37,6 +37,8 @@ AI 完整回答返回原 LanChat 会话，不回传到容量有限的 S3 收件�
 
 ```powershell
 py -3.12 tools/test_ai_status_chat.py
+# 指定安装目录中的 Console，核对随包运行库与两种接口
+py -3.12 tools/test_ai_status_chat.py --console '<安装目录>/robomind-console/RoboMindConsole.exe'
 py -3.12 tools/test_status_queries.py
 py -3.12 tools/test_real_ai_status_chat.py --server '../LanChat-Next/build/server-mingw/src/server/lanchat_server_next.exe' --output build/ai-validation/real-s3.json
 ```
