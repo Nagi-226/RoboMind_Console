@@ -48,6 +48,8 @@ HTTP 429 根据提供方错误分类为限流 / 额度不足 / 原因不明确�
 
 ## 验证
 
+2026-11-24 沉浸语音链路新增 TCP_NODELAY，配合 S3 预缓冲 / DMA 和首尾渐变完成固定音源、网络停顿与实际 LAN / 本地 VITS / S3 回归。用户已确认“音效合格”，优化随本轮合入 `master`；诊断、固件哈希与测试边界见 [S3 音质记录](https://github.com/Nagi-226/RoboMind-S3/blob/master/docs/audio-quality-20261124.md)。本次发布没有新增模型调用或重新构建安装器。
+
 2026.11.23.2 完整安装包在移除开发 Qt PATH 后，使用安装目录 Console 完成 Anthropic / OpenAI 两种模拟器检查；安装、重复安装、卸载和个人文件保留通过。对应 LanChat / Console 功能提交为 `61f4ec9` / `e00eba7`，详细产物与证据见 [LanChat 发布记录](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/windows-release-20261123.md)。本次发布没有新增付费生成或实板验收。
 
 ```powershell
