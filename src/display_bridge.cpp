@@ -19,7 +19,7 @@ bool idValid(const QString& id){static const QRegularExpression expression("^[A-
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 }
 DisplayBridge::DisplayBridge(QObject* parent):QObject(parent){timer_.setInterval(250);connect(&timer_,&QTimer::timeout,this,&DisplayBridge::pump);timer_.start();}
-void DisplayBridge::attach(QTcpSocket* socket){board_=socket;ready_=false;navigation_=false;queries_=false;immersion_=pcm_=false;view_={};if(socket){connect(socket,&QTcpSocket::disconnected,this,[this,socket]{if(board_!=socket)return;ready_=false;navigation_=false;queries_=false;immersion_=pcm_=false;view_={};});projectState();}}
+void DisplayBridge::attach(QTcpSocket* socket){board_=socket;ready_=false;navigation_=false;queries_=false;immersion_=pcm_=false;view_={};if(socket){socket->setSocketOption(QAbstractSocket::LowDelayOption,1);connect(socket,&QTcpSocket::disconnected,this,[this,socket]{if(board_!=socket)return;ready_=false;navigation_=false;queries_=false;immersion_=pcm_=false;view_={};});projectState();}}
 void DisplayBridge::setLanChatConnected(bool connected){if(lanchat_==connected)return;lanchat_=connected;projectState();}
 void DisplayBridge::record(const QString& id,const QString& state,const QString& reason){
     for(int i=0;i<deliveries_.size();++i)if(deliveries_[i].toObject().value("id").toString()==id){deliveries_.removeAt(i);break;}
