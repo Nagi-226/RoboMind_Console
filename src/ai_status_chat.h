@@ -12,6 +12,7 @@ class QNetworkReply;
 
 // PC-owned, read-only model gateway. Questions and answers never become device commands.
 class AiStatusChat : public QObject {
+    Q_OBJECT
 public:
     struct Config {
         bool enabled=false;
@@ -26,6 +27,9 @@ public:
     AiStatusChat(const Config& config,LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent=nullptr);
     bool consume(const QJsonObject& message);
     QJsonObject status() const;
+signals:
+    void questionStarted(const QString& id);
+    void answerReady(const QString& id,const QString& answer,bool success);
 private:
     struct Session { QJsonArray history; qint64 touched=0; };
     struct Job { QJsonObject original; QString conversation,question,context; int remaining=3; qint64 created=0; };

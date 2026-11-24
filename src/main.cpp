@@ -18,7 +18,7 @@
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
-    app.setApplicationVersion("2026.11.23.2");
+    app.setApplicationVersion("2026.11.24.2");
     QApplication::setApplicationName("RoboMind Console");
 
     quint16 port = 9000;
@@ -71,9 +71,11 @@ int main(int argc, char** argv)
             }
             QFile request(QFileInfo(statusFile).absolutePath() + "/navigation.request");
             if(request.exists()&&request.size()<=512&&request.open(QIODevice::ReadOnly)){
-                const auto command=QJsonDocument::fromJson(request.readAll()).object();request.close();request.remove();
+                const auto command=QJsonDocument::fromJson(request.readAll()).object();request.close();
                 const qint64 age=QDateTime::currentMSecsSinceEpoch()-command.value("created_ms").toInteger();
-                if(age>=0&&age<5000)window.navigateBoard(command.value("id").toString(),command.value("action").toString());
+                // Media can fill the TCP write budget. Retain the command until it
+                // is queued, instead of losing Stop at a busy instant.
+                if(age>=5000||age<-1000||command.isEmpty()||(age>=0&&window.navigateBoard(command.value("id").toString(),command.value("action").toString())))request.remove();
             }
             QSaveFile output(statusFile);
             if (!output.open(QIODevice::WriteOnly)) { if(++statusWriteFailures>=40)app.exit(3); return; }

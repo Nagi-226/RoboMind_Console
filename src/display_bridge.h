@@ -19,8 +19,10 @@ public:
     QJsonObject status() const;
     bool navigate(const QString& id,const QString& action);
     bool requestStatus(const QString& id,const QString& kind);
+    bool sendMedia(const QString& topic,const QString& payload,int ttl);
 signals:
     void statusReply(const QString& payload);
+    void audioStatus(const QJsonObject& status);
 private:
     struct Pending {QString id,payload; qint64 created=0,lastSent=0;};
     void pump();
@@ -35,5 +37,7 @@ private:
     bool ready_=false,lanchat_=false;
     bool navigation_=false;
     bool queries_=false;
+    bool immersion_=false;
+    bool pcm_=false;
     QJsonObject view_;
 };

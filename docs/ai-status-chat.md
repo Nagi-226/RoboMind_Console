@@ -1,6 +1,6 @@
 # LanChat 文字自由问答
 
-2026-11-23：第一阶段在 PC / Console 实施。用户授权使用本机已有 DeepSeek Anthropic 兼容接口做少量联调；语音与小智通用 AI 集成继续列为后续。
+2026-11-24：文字问答继续由 PC / Console 提供；用户官方 DeepSeek `deepseek-flash` 已通过真实 S3 状态问答。沉浸模式新增 Windows 中文 TTS、有界 PCM 与逐句字幕，麦克风和小智协议留后续。
 
 ## 使用
 
@@ -64,6 +64,6 @@ Qt 客户端验证包括密钥加密恢复、桥 INI 不含凭据、问答导航
 
 ## 后续
 
-1. 语音：适配 ES8388 输入 / 输出、流式 ASR / TTS，与文字问答共用 Console 会话和状态接口。
+1. 语音输出已完成 Windows 中文 / 本地 VITS 少女声线 → ES8388；后续增加麦克风 / ASR / 唤醒、更多音色及精准口型，与文字问答共用会话。当前见 `LanChat-Next/docs/whale-immersion-plan.md`。
 2. 小智通用 AI：核对 `atk-dnesp32s3` 板型、OV5640 相机差异、协议 / 激活服务与 SDK，逐项复用音频、MCP 工具；保持现有五页终端。
 3. 通用项目工具：由各仓适配器提供真实状态；控制能力需要单独定义权限与执行确认。

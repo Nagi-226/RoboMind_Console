@@ -4,7 +4,7 @@
 
 这是个人独立项目中的配套工具。感知决策由 PPM 承担；Console 负责通信、展示和操作。
 
-> 当前状态：2026-11-23。群发告警、终端下行桥、PC 附件隔离、只读查询、USB 日志和外部模型文字问答已落地。版本 **2026.11.23.2** 增加渠道可选思考强度、AI 次数 / token 统计、每日限额与 HTTP 429 分类 / 冷却，随 LanChat 完整安装包分发。LanChat 集成时 Console 在后台运行；下次先联调用户自己的 DeepSeek 官方 API，鲸鱼娘沉浸模式与语音继续待办。
+> 当前状态：2026-11-24。源码与本机版本 **2026.11.24.2** 增加鲸鱼娘语音桥：Windows 中文 TTS / 本地中文派蒙少女声线、逐句字幕、有界 PCM 流和取消 / 打断，已与真实 LAN 服务端及 S3 联调。DeepSeek 官方 `deepseek-flash` 状态问答返回 HTTP 200 并完成语音播放。鲸鱼娘初版与少女声线随本轮主分支更新；完整安装包仍为 2026.11.23.2。
 
 ## 当前功能
 
@@ -17,6 +17,7 @@
 | 页面控制 | 总览 / 收件箱 / PPM / VVOS / 设备，以及详情、滚动、本地已读、中英文切换 |
 | 关键词查询 | 感知 / 链路 / 设备 / 帮助；有界请求、状态校验、按原私聊 / 配置群回复、离线 / 超时 / 限流 |
 | AI 状态问答 | Anthropic / OpenAI 兼容接口；每轮刷新三类快照、有限上下文、原会话回复；不执行设备控制 |
+| 沉浸语音桥 | 可选 Windows 中文 / 本地 VITS 少女语音，字幕按板端字库排成两行；按 S3 缓存背压发送 PCM，下一段等待当前段完成，退出 / 停止 / 新问题可取消 |
 | USB 运行日志 | 独立串口线程、UTF-8 / ANSI 分行、脱敏有界缓存与滚动历史；四种 `/日志` 命令在原会话回复 |
 | 后台桥 | 本机原子状态文件和页面请求；Windows 临时读锁写入失败可重试 |
 | 独立验证 | selfcheck、framecheck、无窗口接收工具和独立假服务端下行测试 |
@@ -49,6 +50,8 @@ flowchart LR
 LanChat 部署脚本会将 Console 的正式 `build/dist/` 产物复制到 `%LOCALAPPDATA%\LanChat-Qt\robomind-console\`。桥账号由客户端独立管理，避免占用人类聊天账号的连接。
 
 说明：[LanChat 板端面板](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/board-panel.md)。
+
+角色模式从登录后的齿轮设置进入。Console 的 `SpeechBridge` 管理扬声器归属和本机 TTS，PC 原会话保留完整回答；角色素材、音频参数和验证边界见 [沉浸模式说明](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/whale-immersion-plan.md)。麦克风 / ASR / 小智协议未接入。
 
 ### 单独运行 Console
 
@@ -213,3 +216,5 @@ python tools/test_board_logs.py --server '../LanChat-Next/build/server-mingw/src
 - **文字模型问答已进入 PC / Console**。通过明确的只读接口取得设备状态，返回原聊天；S3 不运行聊天大模型。语音、小智通用 AI 与实际控制权限继续作为后续阶段。
 
 独立 `tools/test_status_queries.py` 通过（包含并发上限和限流），原 `tools/test_display_bridge.py` 回归通过；`tools/test_real_status_queries.py` 使用隔离账号 / DB 和真实 S3，验证四项私聊与一次群聊，5 条单次回复保存到历史，invalid=0。协议与资源见 [S3 查询协议](https://github.com/Nagi-226/RoboMind-S3/blob/master/docs/status-query-protocol.md)。跨仓进度和下一步统一维护在[实施清单](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/next-steps-20261122.md)。
+
+本地少女声线及研究结果：[声线来源与安装](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/whale-voice.md)。模型、环境与本机路径独立安装，不随公共安装包分发。

@@ -102,6 +102,7 @@ bool AiStatusChat::consume(const QJsonObject& message){
         .arg(state.value("decode_failures").toInteger()).arg(state.value("bad_headers").toInteger());
     const auto logs=state.value("logs").toObject();context+=QString("USB 日志采集：%1；缓存条数：%2（本轮未提供日志正文）\n").arg(logs.value("state").toString("未启用")).arg(logs.value("count").toInteger());
     jobs_.insert(id,Job{message,conversation,question,context,3,now()});
+    emit questionStarted(id);
     for(const QString& kind:{QString("perception"),QString("link"),QString("device")})queries_->snapshot(kind,[this,id,kind](const QString& body){query(id,kind,body);});
     return true;
 }
@@ -173,6 +174,7 @@ void AiStatusChat::finish(const QString& id,const QString& answer,bool success){
         ++replied_;
     }else ++failed_;
     respond(job.original,answer+QString("\n\n快照采集于 %1").arg(QDateTime::fromMSecsSinceEpoch(job.created).toString("HH:mm:ss")));
+    emit answerReady(id,answer,success);
 }
 void AiStatusChat::prune(){
     resetDay();

@@ -20,6 +20,7 @@
 #include "status_query.h"
 #include "board_logs.h"
 #include "ai_status_chat.h"
+#include "speech_bridge.h"
 #include <QCoreApplication>
 #include <QStandardPaths>
 
@@ -109,6 +110,9 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
     logs_=new BoardLogs(logDirectory.isEmpty()?QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/board-logs":logDirectory,this);
     queries_->setLogReply([this](const QString& filter){return logs_->reply(filter);});
     ai_=new AiStatusChat(sink_,queries_,[this]{return bridgeStatus();},this);
+    speech_=new SpeechBridge(display_,this);
+    connect(ai_,&AiStatusChat::questionStarted,speech_,&SpeechBridge::begin);
+    connect(ai_,&AiStatusChat::answerReady,speech_,&SpeechBridge::answer);
     connect(sink_,&LanChatSink::messageReceived,this,[this](const QJsonObject& message){
         if(StatusQuery::recognizes(message))queries_->consume(message);else ai_->consume(message);
     });
@@ -303,7 +307,12 @@ void MainWindow::OnDisconnected()
     status_hint_->setText("板子已断开 —— 等待其自动重连（本应用无需重启）");
 }
 
-bool MainWindow::navigateBoard(const QString& id,const QString& action){return display_->navigate(id,action);}
+bool MainWindow::navigateBoard(const QString& id,const QString& action){
+    if(action=="stop_speech"||action=="terminal"||action=="audio_test")speech_->cancel();
+    const bool accepted=display_->navigate(id,action);
+    if(accepted&&action!="immersion"&&!action.startsWith("volume_"))speech_->cancel();
+    return accepted;
+}
 void MainWindow::setLogCapture(bool enabled,const QString& port){if(enabled)logs_->start(port);else logs_->stop();}
 QJsonObject MainWindow::bridgeStatus() const
 {
@@ -320,6 +329,7 @@ QJsonObject MainWindow::bridgeStatus() const
             {"source", last_source_},
             {"lanchat_state", sink_->stateText()},
             {"display", display_->status()},
+            {"speech",speech_?speech_->status():QJsonObject{}},
             {"logs", logs_ ? logs_->status() : QJsonObject()},
             {"ai", ai_ ? ai_->status() : QJsonObject()},
             {"queries", queries_ ? queries_->status() : QJsonObject()}};

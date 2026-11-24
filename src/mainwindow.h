@@ -24,6 +24,7 @@ class DisplayBridge;
 class StatusQuery;
 class BoardLogs;
 class AiStatusChat;
+class SpeechBridge;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -55,6 +56,7 @@ private:
     StatusQuery* queries_{nullptr};
     BoardLogs* logs_{nullptr};
     AiStatusChat* ai_{nullptr};
+    SpeechBridge* speech_{nullptr};
 
     QLabel*       conn_label_{nullptr};
     QLabel*       sink_label_{nullptr};
