@@ -31,18 +31,22 @@ public:
         int     target{0};    // 私聊：接收者数字用户 id
         int     groupId{0};   // 群发：群 id。0 = 不发群
         bool    receiveMessages{false}; // ReceiveMsg -> VVOS display; default preserves send-only configs.
+        QString logFile{"lanchat-sink.log"};
     };
 
     // 读 robomind-console.ini：先当前工作目录，后 exe 所在目录；无文件 → 全默认（关闭）。
     static Config LoadConfig();
 
     explicit LanChatSink(const Config& cfg, QObject* parent = nullptr);
+    LanChatSink(const Config& cfg, int userId, const QString& password, QObject* parent);
 
     // 同一 summary 30 秒内不重复发。未登录时丢弃（不占去抖窗口，恢复后可补发）。
     void sendAlert(int level, const QString& summary);
     bool sendReply(const QJsonObject& original,const QString& text);
 
     QString stateText() const { return state_; }
+    bool online() const { return login_confirmed_; }
+    int userId() const { return user_id_; }
 
 signals:
     void stateChanged(const QString& text);

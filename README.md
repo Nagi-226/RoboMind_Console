@@ -4,7 +4,7 @@
 
 这是个人独立项目中的配套工具。感知决策由 PPM 承担；Console 负责通信、展示和操作。
 
-> 当前状态：2026-11-24。源码与本机版本 **2026.11.24.2** 已提供鲸鱼娘语音桥：Windows 中文 TTS / 本地中文派蒙少女声线、逐句字幕、有界 PCM 流和取消 / 打断，已与真实 LAN 服务端及 S3 联调。DeepSeek 官方 `deepseek-flash` 状态问答返回 HTTP 200 并完成语音播放。两端 TCP_NODELAY 配合 S3 缓冲优化已部署，用户确认音效合格，本轮合入主分支；完整安装包仍为 2026.11.23.2。
+> 当前状态：2026-11-27。DS、GPT 可用独立 LanChat 账号同时登录，共用一条 S3 连接并分别回答真实状态。向其中一个账号发出私聊文字后，屏幕自动切到对应角色，字幕和语音等待板端确认。源码支持此功能；完整 LanChat 安装包仍为 2026.11.23.2。
 
 ## 当前功能
 
@@ -16,7 +16,7 @@
 | 投递状态 | 有界队列、TTL、重试 / 判重，以及 accepted / rendered / rejected / expired 状态 |
 | 页面控制 | 总览 / 收件箱 / PPM / VVOS / 设备，以及详情、滚动、本地已读、中英文切换 |
 | 关键词查询 | 感知 / 链路 / 设备 / 帮助；有界请求、状态校验、按原私聊 / 配置群回复、离线 / 超时 / 限流 |
-| AI 状态问答 | Anthropic / OpenAI 兼容接口；每轮刷新三类快照、有限上下文、原会话回复；不执行设备控制 |
+| AI 状态问答 | Anthropic / OpenAI 兼容接口；DS 与 GPT 各自私聊与上下文，通过同一条 S3 连接查询实时快照，回复原会话 |
 | 沉浸语音桥 | 可选 Windows 中文 / 本地 VITS 少女语音，字幕按板端字库排成两行；TCP_NODELAY 配合 S3 缓存背压发送 PCM，下一段等待当前段完成，退出 / 停止 / 新问题可取消 |
 | USB 运行日志 | 独立串口线程、UTF-8 / ANSI 分行、脱敏有界缓存与滚动历史；四种 `/日志` 命令在原会话回复 |
 | 后台桥 | 本机原子状态文件和页面请求；Windows 临时读锁写入失败可重试 |
@@ -51,7 +51,7 @@ LanChat 部署脚本会将 Console 的正式 `build/dist/` 产物复制到 `%LOC
 
 说明：[LanChat 板端面板](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/board-panel.md)。
 
-角色模式从登录后的齿轮设置进入。Console 的 `SpeechBridge` 管理扬声器归属和本机 TTS，PC 原会话保留完整回答；角色素材、音频参数和验证边界见 [沉浸模式说明](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/whale-immersion-plan.md)。麦克风 / ASR / 小智协议未接入。
+角色模式从登录后的齿轮设置进入。DS 对应鲸鱼娘，GPT 对应白龙娘，双登录时发送私聊文字即可切换；也可以手动选角色。Console 的 `SpeechBridge` 管理扬声器和本机 TTS，完整回答留在 PC 原会话。详见[双账号问答说明](docs/ai-status-chat.md)及[沉浸模式说明](https://github.com/Nagi-226/LanChat-Next/blob/master/docs/whale-immersion-plan.md)。
 
 ### 单独运行 Console
 

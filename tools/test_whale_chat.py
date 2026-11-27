@@ -10,6 +10,7 @@ def main():
     p = argparse.ArgumentParser(); p.add_argument('--server', required=True); p.add_argument('--output', required=True)
     p.add_argument('--official', action='store_true'); p.add_argument('--board-port', type=int, default=9000)
     p.add_argument('--voice', choices=['auto', 'windows', 'local_vits'], default='auto')
+    p.add_argument('--persona', choices=['whale', 'dragon'], default='whale')
     args = p.parse_args(); model = None; report = {'result': 'RUNNING', 'real_provider': args.official, 'checks': []}
     answer = '“板端”已经在线。当前链路连接正常，中文显示和语音正在共同运行。\n这是第二段字幕，用来检查句子自动切换。最后一段回答不会因为窗口或者屏幕大小而丢失。😀'
     class Model(http.server.BaseHTTPRequestHandler):
@@ -59,7 +60,12 @@ def main():
                     assert env.get(key), 'Missing provider environment: '+key
             console = subprocess.Popen([str(ROOT/'build/dist/RoboMindConsole.exe'), '--bridge', '--port', str(args.board_port), '--status-file', str(status), '--stop-file', str(stop)], cwd=folder, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             state = wait(lambda s: s.get('display', {}).get('pcm_supported') and s.get('lanchat_state') == '已登录', 60)
-            assert state['ai']['configured']; nav('immersion'); nav('volume_20')
+            assert state['ai']['configured']
+            character_action = 'immersion_dragon' if args.persona == 'dragon' else 'immersion'
+            if args.persona == 'dragon': assert state['display']['dragon_supported']
+            view = nav(character_action)['display']['view']
+            assert view['immersion'] and view.get('persona', 'whale') == args.persona
+            nav('volume_20')
             def ask(question):
                 user.send(type=5, fromId=user.uid, toId=bridge_id, msg=question)
                 user.socket.settimeout(65)
@@ -74,6 +80,8 @@ def main():
             assert state['speech']['completed_segments'] >= (1 if args.official else 2) and state['speech']['pcm_bytes'] > (0 if args.official else 32000), state['speech']
             assert state['speech']['last_error'] == ''; report['completed_answer'] = state['speech']
             if args.voice != 'auto': assert state['speech']['provider'] == args.voice
+            if args.persona == 'dragon' and args.voice == 'local_vits':
+                assert state['speech']['dragon_voice_available'] and '优菈' in state['speech']['voice']
             report['checks'].append('PC complete single answer; '+state['speech']['voice']+'; segmented subtitles; physical PCM completion')
             if not args.official:
                 time.sleep(2.1); ask('给一个长回答用于停止测试。')
@@ -89,8 +97,16 @@ def main():
                 report['checks'].append('latest question owns board speech; PC retains each original reply')
                 time.sleep(2.1); ask('长回答用于退出模式。')
                 wait(lambda s: s.get('speech', {}).get('stage') == 'streaming')
-                nav('terminal'); wait(lambda s: s.get('speech', {}).get('stage') == 'idle')
-                report['checks'].append('return to five pages cancels speech')
+                if args.persona == 'dragon':
+                    view = nav('immersion')['display']['view']
+                    assert view['immersion'] and view['persona'] == 'whale'
+                    state = wait(lambda s: s.get('speech', {}).get('stage') == 'idle')
+                    if args.voice == 'local_vits': assert '派蒙' in state['speech']['voice']
+                    assert nav(character_action)['display']['view']['persona'] == 'dragon'
+                    report['checks'].append('switching persona cancels active speech and selects the new voice')
+                assert not nav('terminal')['display']['view']['immersion']
+                wait(lambda s: s.get('speech', {}).get('stage') == 'idle')
+                report['checks'].append('return to five pages' if args.persona == 'dragon' else 'return to five pages cancels speech')
             user.send(type=24, toId=bridge_id, limit=50)
             history = user.wait(25)['messages']; assert sum(item['fromId'] == bridge_id for item in history) == len(report['replies'])
             state = snapshot(); assert state['ai']['failed'] == 0 and state['ai']['pending'] == 0

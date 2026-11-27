@@ -11,6 +11,7 @@
 #include <QStatusBar>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #include "interconnect/message_codec.hpp"
@@ -29,6 +30,11 @@ namespace {
 using vr::core::ErrorCode;
 using vr::interconnect::MessageCodec;
 using vr::interconnect::MessageEnvelope;
+
+bool ShowsPersona(const QJsonObject& view,const QString& persona)
+{
+    return view.value("immersion").toBool() && view.value("persona").toString()==persona;
+}
 
 QMap<QString, QString> ParsePayload(const QString& payload)
 {
@@ -103,24 +109,92 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
         status_hint_->setText(QString("正在监听 %1，等待板子上报…").arg(port_));
     }
 
-    sink_ = new LanChatSink(LanChatSink::LoadConfig(), this);
+    const auto lanConfig = LanChatSink::LoadConfig();
+    sink_ = new LanChatSink(lanConfig, this);
     display_ = new DisplayBridge(this);
-    connect(sink_, &LanChatSink::messageReceived, display_, &DisplayBridge::enqueue);
     queries_=new StatusQuery(sink_,display_,[this]{return bridgeStatus();},this);
     logs_=new BoardLogs(logDirectory.isEmpty()?QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/board-logs":logDirectory,this);
     queries_->setLogReply([this](const QString& filter){return logs_->reply(filter);});
     ai_=new AiStatusChat(sink_,queries_,[this]{return bridgeStatus();},this);
     speech_=new SpeechBridge(display_,this);
-    connect(ai_,&AiStatusChat::questionStarted,speech_,&SpeechBridge::begin);
-    connect(ai_,&AiStatusChat::answerReady,speech_,&SpeechBridge::answer);
-    connect(sink_,&LanChatSink::messageReceived,this,[this](const QJsonObject& message){
-        if(StatusQuery::recognizes(message))queries_->consume(message);else ai_->consume(message);
-    });
-    connect(sink_, &LanChatSink::stateChanged, this, [this](const QString& s) {
-        sink_label_->setText(QString("LanChat: %1").arg(s));
-        display_->setLanChatConnected(s == "已登录");
-    });
-    sink_label_->setText(QString("LanChat: %1").arg(sink_->stateText()));
+    chatPresentationTimer_.setInterval(200);
+    connect(&chatPresentationTimer_,&QTimer::timeout,this,&MainWindow::updateChatPresentation);
+    connect(display_,&DisplayBridge::viewChanged,this,&MainWindow::updateChatPresentation);
+    const int gptId = qEnvironmentVariableIntValue("ROBOMIND_GPT_USER_ID");
+    const auto gptPassword = qEnvironmentVariable("ROBOMIND_GPT_PASSWORD");
+    const auto gptConfig = AiStatusChat::Config::gptEnvironment();
+    if (gptId > 0 && gptId != sink_->userId() && !gptPassword.isEmpty() && gptConfig.enabled && gptConfig.valid()) {
+        auto privateChat = lanConfig;
+        privateChat.target = 0;
+        privateChat.groupId = 0;
+        privateChat.receiveMessages = true;
+        privateChat.logFile = "lanchat-gpt-sink.log";
+        gptSink_ = new LanChatSink(privateChat,gptId,gptPassword,this);
+        gptAi_ = new AiStatusChat(gptConfig,gptSink_,queries_,[this]{
+            auto state=bridgeStatus();
+            state["lanchat_state"]=gptSink_->stateText();
+            return state;
+        },this);
+    }
+    const auto updateChat = [this] {
+        auto label = QString("LanChat: %1").arg(sink_->stateText());
+        if(gptSink_)label += QString(" · GPT: %1").arg(gptSink_->stateText());
+        sink_label_->setText(label);
+        display_->setLanChatConnected(sink_->online() || (gptSink_ && gptSink_->online()));
+    };
+    const auto wireChat = [this,updateChat](LanChatSink* account,AiStatusChat* chat,const QString& persona) {
+        connect(account,&LanChatSink::stateChanged,this,updateChat);
+        connect(account,&LanChatSink::messageReceived,this,[this,account,chat,persona](const QJsonObject& message){
+            const int sender=message.value("fromId").toInt();
+            if(sender==sink_->userId()||(gptSink_&&sender==gptSink_->userId()))return;
+            if(gptSink_&&sender>0&&message.value("type").toInt()==6&&!message.value("msg").toString().trimmed().isEmpty()){
+                const auto id=message.value("msg_id").toVariant().toString();
+                const auto key=QString::number(account->userId())+":"+id;
+                if(!id.isEmpty()&&!recentPrivateMessages_.contains(key)){
+                    if(recentPrivateMessages_.size()>=256)recentPrivateMessages_.dequeue();
+                    recentPrivateMessages_.enqueue(key);
+                    showChatPersona(persona);
+                }
+            }
+            display_->enqueue(message);
+            if(StatusQuery::recognizes(message))queries_->consume(message,account);else chat->consume(message);
+        });
+        connect(chat,&AiStatusChat::questionStarted,this,[this,persona](const QString& id,bool direct){
+            if(!chatPresentation_.control.isEmpty()){
+                if(direct&&chatPresentation_.persona==persona){
+                    chatPresentation_.question=id;
+                    chatPresentation_.answer.clear();
+                    chatPresentation_.answered=false;
+                }
+                return;
+            }
+            if(!gptSink_||ShowsPersona(display_->status().value("view").toObject(),persona))speech_->begin(id);
+        });
+        connect(chat,&AiStatusChat::answerReady,this,[this](const QString& id,const QString& answer,bool success){
+            if(id==chatPresentation_.question){
+                chatPresentation_.answer=answer;
+                chatPresentation_.answered=true;
+                chatPresentation_.success=success;
+            }else speech_->answer(id,answer,success);
+        });
+    };
+    wireChat(sink_,ai_,"whale");
+    if(gptSink_)wireChat(gptSink_,gptAi_,"dragon");
+    updateChat();
+}
+
+MainWindow::~MainWindow()
+{
+    // Socket disconnect handlers update widgets; detach while they still exist.
+    clearChatPresentation();
+    disconnect(sink_,nullptr,this,nullptr);
+    if(gptSink_)disconnect(gptSink_,nullptr,this,nullptr);
+    if(client_){
+        disconnect(client_,nullptr,this,nullptr);
+        display_->attach(nullptr);
+        client_->abort();
+        client_=nullptr;
+    }
 }
 
 void MainWindow::BuildUi()
@@ -298,6 +372,7 @@ void MainWindow::ApplyFrame(const QString& text)
 
 void MainWindow::OnDisconnected()
 {
+    clearChatPresentation();
     if (client_ != nullptr) {
         client_->deleteLater();
         client_ = nullptr;
@@ -307,10 +382,69 @@ void MainWindow::OnDisconnected()
     status_hint_->setText("板子已断开 —— 等待其自动重连（本应用无需重启）");
 }
 
+void MainWindow::showChatPersona(const QString& persona)
+{
+    if(!client_)return;
+    if(chatPresentation_.persona==persona)return;
+    if(chatPresentation_.control.isEmpty()&&ShowsPersona(display_->status().value("view").toObject(),persona))return;
+
+    // Use a new control ID even if the board still shows the requested persona:
+    // an earlier switch to the other persona may already be on its way.
+    speech_->cancel();
+    chatPresentation_={};
+    chatPresentation_.persona=persona;
+    chatPresentation_.control=QUuid::createUuid().toString(QUuid::Id128);
+    chatPresentation_.expires=QDateTime::currentMSecsSinceEpoch()+5000;
+    chatPresentationTimer_.start();
+    updateChatPresentation();
+}
+
+void MainWindow::updateChatPresentation()
+{
+    if(chatPresentation_.control.isEmpty())return;
+    const auto timestamp=QDateTime::currentMSecsSinceEpoch();
+    const auto status=display_->status();
+    const bool dragon=chatPresentation_.persona=="dragon";
+    const auto view=status.value("view").toObject();
+    if(timestamp>=chatPresentation_.expires){
+        clearChatPresentation();
+        return;
+    }
+    if(view.value("control").toString()==chatPresentation_.control&&ShowsPersona(view,chatPresentation_.persona)){
+        const auto ready=chatPresentation_;
+        clearChatPresentation();
+        if(!ready.question.isEmpty()){
+            speech_->begin(ready.question);
+            if(ready.answered)speech_->answer(ready.question,ready.answer,ready.success);
+        }
+        return;
+    }
+    if(!status.value("terminal_ready").toBool())return;
+    if(!status.value("immersion_supported").toBool()||!status.value("navigation").toBool()||
+       (dragon&&!status.value("dragon_supported").toBool())){
+        clearChatPresentation();
+        return;
+    }
+    if(timestamp-chatPresentation_.lastSent>=500&&
+       display_->navigate(chatPresentation_.control,dragon?"immersion_dragon":"immersion"))
+        chatPresentation_.lastSent=timestamp;
+}
+
+void MainWindow::clearChatPresentation()
+{
+    chatPresentationTimer_.stop();
+    chatPresentation_={};
+}
+
 bool MainWindow::navigateBoard(const QString& id,const QString& action){
+    const auto view=display_->status().value("view").toObject();
+    const bool samePersona=view.value("immersion").toBool()&&
+        ((action=="immersion"&&view.value("persona").toString("whale")=="whale")||
+         (action=="immersion_dragon"&&view.value("persona").toString()=="dragon"));
     if(action=="stop_speech"||action=="terminal"||action=="audio_test")speech_->cancel();
     const bool accepted=display_->navigate(id,action);
-    if(accepted&&action!="immersion"&&!action.startsWith("volume_"))speech_->cancel();
+    if((accepted&&!action.startsWith("volume_"))||action=="stop_speech")clearChatPresentation();
+    if(accepted&&!samePersona&&!action.startsWith("volume_"))speech_->cancel();
     return accepted;
 }
 void MainWindow::setLogCapture(bool enabled,const QString& port){if(enabled)logs_->start(port);else logs_->stop();}
@@ -328,6 +462,9 @@ QJsonObject MainWindow::bridgeStatus() const
             {"last_frame_ms", last_frame_ms_},
             {"source", last_source_},
             {"lanchat_state", sink_->stateText()},
+            {"gpt_lanchat_state",gptSink_?gptSink_->stateText():QString()},
+            {"gpt_account_id",gptSink_?gptSink_->userId():0},
+            {"gpt_ai",gptAi_?gptAi_->status():QJsonObject{}},
             {"display", display_->status()},
             {"speech",speech_?speech_->status():QJsonObject{}},
             {"logs", logs_ ? logs_->status() : QJsonObject()},

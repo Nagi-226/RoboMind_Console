@@ -18,7 +18,7 @@ qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 QString escaped(const QString& text){return QString::fromLatin1(QUrl::toPercentEncoding(text));}
 QProcessEnvironment speechEnvironment(){
     auto env=QProcessEnvironment::systemEnvironment();
-    for(const auto& key:env.keys())if(key.startsWith("ROBOMIND_AI_")||key.startsWith("ROBOMIND_LANCHAT_")||key.contains("API_KEY")||key.contains("TOKEN")||key.contains("PASSWORD")||key.contains("SECRET"))env.remove(key);
+    for(const auto& key:env.keys())if(key.startsWith("ROBOMIND_AI_")||key.startsWith("ROBOMIND_LANCHAT_")||key.startsWith("ROBOMIND_GPT_")||key.contains("API_KEY")||key.contains("TOKEN")||key.contains("PASSWORD")||key.contains("SECRET"))env.remove(key);
     return env;
 }
 QStringList subtitles(QString text){
@@ -60,8 +60,9 @@ QByteArray wavPcm(const QByteArray& wav){
 SpeechBridge::SpeechBridge(DisplayBridge* display,QObject* parent):QObject(parent),display_(display){
     QFile config(qEnvironmentVariable("ROBOMIND_TTS_CONFIG",QCoreApplication::applicationDirPath()+"/voice-backend.json"));
     if(config.open(QIODevice::ReadOnly)&&config.size()<16384){const auto data=QJsonDocument::fromJson(config.readAll()).object();python_=data.value("python").toString();worker_=data.value("worker").toString();runtime_=data.value("runtime").toString();
-        localConfigured_=QFileInfo(python_).isAbsolute()&&QFile::exists(python_)&&QFileInfo(worker_).isAbsolute()&&QFile::exists(worker_)&&QFileInfo(runtime_).isAbsolute()&&QFile::exists(runtime_+"/voice.json");}
-    provider_=qEnvironmentVariable("ROBOMIND_TTS_PROVIDER","auto");if(provider_=="auto")provider_=localConfigured_?"local_vits":"windows";
+        localConfigured_=QFileInfo(python_).isAbsolute()&&QFile::exists(python_)&&QFileInfo(worker_).isAbsolute()&&QFile::exists(worker_)&&QFileInfo(runtime_).isAbsolute()&&QFile::exists(runtime_+"/voice.json");
+        dragonConfigured_=localConfigured_&&data.value("dragon_voice").toBool();}
+    provider_=qEnvironmentVariable("ROBOMIND_TTS_PROVIDER","auto");
     timer_.setInterval(20);connect(&timer_,&QTimer::timeout,this,&SpeechBridge::pump);timer_.start();connect(display_,&DisplayBridge::audioStatus,this,&SpeechBridge::receive);
 }
 SpeechBridge::~SpeechBridge(){timer_.stop();for(auto process:{process_,local_})if(process){process->disconnect(this);process->kill();process->waitForFinished(1500);}}
@@ -74,7 +75,9 @@ void SpeechBridge::cancel(){
 }
 void SpeechBridge::begin(const QString& id){
     cancel();const auto status=display_->status();
-    if(!status.value("immersion_supported").toBool()||!status.value("view").toObject().value("immersion").toBool())return;
+    const auto view=status.value("view").toObject();
+    if(!status.value("immersion_supported").toBool()||!view.value("immersion").toBool())return;
+    dragonSession_=view.value("persona").toString()=="dragon";
     id_=id;segment_=completed_=0;totalBytes_=0;lastError_.clear();touched_=now();stage_="thinking";state("thinking");
     if(!status.value("pcm_supported").toBool())fail("板端扬声器尚未就绪");
 }
@@ -92,7 +95,9 @@ void SpeechBridge::synthesizeLocal(){
     if(!localConfigured_){fail("未安装本地少女声线，请切换 Windows 中文语音");return;}
     stage_="synthesizing";touched_=now();localRequest_=QUuid::createUuid().toString(QUuid::Id128);
     const QString requestId=localRequest_;QString text=sentences_.first();text.remove('\n');
-    const QByteArray request=QJsonDocument(QJsonObject{{"id",requestId},{"text",text}}).toJson(QJsonDocument::Compact)+'\n';
+    QJsonObject payload{{"id",requestId},{"text",text}};
+    if(dragonSession_)payload.insert("voice","dragon");
+    const QByteArray request=QJsonDocument(payload).toJson(QJsonDocument::Compact)+'\n';
     if(local_&&local_->state()==QProcess::Running){local_->write(request);return;}
     auto* process=new QProcess(this);local_=process;localBuffer_.clear();auto env=speechEnvironment();env.insert("PYTHONUTF8","1");
     if(QDir(runtime_+"/tmp").exists()){env.insert("TEMP",runtime_+"/tmp");env.insert("TMP",runtime_+"/tmp");}process->setProcessEnvironment(env);process->setWorkingDirectory(runtime_);
@@ -114,10 +119,14 @@ void SpeechBridge::synthesizeLocal(){
     connect(process,&QProcess::errorOccurred,this,[this,process](QProcess::ProcessError){if(local_==process){local_=nullptr;process->deleteLater();if(stage_=="synthesizing")fail("无法启动本地语音进程");}});
     process->start(python_,{"-u",worker_,"--runtime",runtime_});
 }
+bool SpeechBridge::useLocal(bool dragon)const{
+    if(dragon)return dragonConfigured_&&(provider_=="auto"||provider_=="local_vits");
+    return provider_=="local_vits"||(provider_=="auto"&&localConfigured_);
+}
 void SpeechBridge::synthesize(){
     if(sentences_.isEmpty()){state("idle");stage_="complete";return;}
-    if(provider_=="local_vits"){synthesizeLocal();return;}
-    if(provider_!="windows"){fail("未知语音后端");return;}
+    if(useLocal(dragonSession_)){synthesizeLocal();return;}
+    if(provider_!="windows"&&provider_!="auto"&&provider_!="local_vits"){fail("未知语音后端");return;}
 #ifndef Q_OS_WIN
     fail("当前主机没有 Windows TTS");return;
 #else
@@ -155,7 +164,8 @@ try {
 }
 void SpeechBridge::pump(){
     if(id_.isEmpty()||stage_=="idle"||stage_=="complete"||stage_=="error")return;
-    const auto info=display_->status();if(!info.value("terminal_ready").toBool()||!info.value("view").toObject().value("immersion").toBool()){cancel();return;}
+    const auto info=display_->status();const auto view=info.value("view").toObject();
+    if(!info.value("terminal_ready").toBool()||!view.value("immersion").toBool()||dragonSession_!=(view.value("persona").toString()=="dragon")){cancel();return;}
     if(now()-touched_>(stage_=="thinking"?150000:45000)){fail("语音播放或合成超时");return;}
     if(!announced_){state("thinking");return;} // Preserve thinking -> start order under TCP backpressure.
     if(stage_=="starting"){
@@ -181,4 +191,8 @@ void SpeechBridge::receive(const QJsonObject& packet){
         totalBytes_+=pcm_.size();++completed_;++segment_;sentences_.removeFirst();pcm_.clear();synthesize();
     }
 }
-QJsonObject SpeechBridge::status()const{return {{"stage",stage_},{"active_id",id_},{"segment",segment_},{"completed_segments",completed_},{"pcm_bytes",totalBytes_},{"last_error",lastError_},{"voice",provider_=="local_vits"?"派蒙风格少女（本地 VITS）":"Windows zh-CN"},{"provider",provider_},{"local_available",localConfigured_},{"synthesis_ms",synthesisMs_}};}
+QJsonObject SpeechBridge::status()const{
+    const bool dragon=display_->status().value("view").toObject().value("persona").toString()=="dragon";
+    const bool local=useLocal(dragon);
+    return {{"stage",stage_},{"active_id",id_},{"segment",segment_},{"completed_segments",completed_},{"pcm_bytes",totalBytes_},{"last_error",lastError_},{"voice",local?(dragon?"优菈风格（本地 VITS）":"派蒙风格少女（本地 VITS）"):"Windows zh-CN"},{"provider",local?"local_vits":"windows"},{"local_available",localConfigured_},{"dragon_voice_available",dragonConfigured_},{"synthesis_ms",synthesisMs_}};
+}

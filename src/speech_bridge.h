@@ -25,6 +25,7 @@ private:
     void receive(const QJsonObject& packet);
     void state(const QString& mode,const QString& text={});
     void fail(const QString& reason);
+    bool useLocal(bool dragon) const;
     DisplayBridge* display_;
     QString id_,lastError_,stage_="idle";
     QStringList sentences_;
@@ -32,7 +33,7 @@ private:
     QPointer<QProcess> local_;
     QString provider_,python_,worker_,runtime_,localRequest_;
     QByteArray localBuffer_;
-    bool localConfigured_=false;
+    bool localConfigured_=false,dragonConfigured_=false,dragonSession_=false;
     int synthesisMs_=0;
     QTemporaryDir scratch_;
     QTimer timer_;

@@ -19,7 +19,7 @@ bool idValid(const QString& id){static const QRegularExpression expression("^[A-
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 }
 DisplayBridge::DisplayBridge(QObject* parent):QObject(parent){timer_.setInterval(250);connect(&timer_,&QTimer::timeout,this,&DisplayBridge::pump);timer_.start();}
-void DisplayBridge::attach(QTcpSocket* socket){board_=socket;ready_=false;navigation_=false;queries_=false;immersion_=pcm_=false;view_={};if(socket){socket->setSocketOption(QAbstractSocket::LowDelayOption,1);connect(socket,&QTcpSocket::disconnected,this,[this,socket]{if(board_!=socket)return;ready_=false;navigation_=false;queries_=false;immersion_=pcm_=false;view_={};});projectState();}}
+void DisplayBridge::attach(QTcpSocket* socket){board_=socket;ready_=false;navigation_=false;queries_=false;immersion_=dragon_=pcm_=false;view_={};if(socket){socket->setSocketOption(QAbstractSocket::LowDelayOption,1);connect(socket,&QTcpSocket::disconnected,this,[this,socket]{if(board_!=socket)return;ready_=false;navigation_=false;queries_=false;immersion_=dragon_=pcm_=false;view_={};});projectState();}}
 void DisplayBridge::setLanChatConnected(bool connected){if(lanchat_==connected)return;lanchat_=connected;projectState();}
 void DisplayBridge::record(const QString& id,const QString& state,const QString& reason){
     for(int i=0;i<deliveries_.size();++i)if(deliveries_[i].toObject().value("id").toString()==id){deliveries_.removeAt(i);break;}
@@ -57,8 +57,8 @@ bool DisplayBridge::send(const QString& topic,const QString& payload,int ttl){
 }
 void DisplayBridge::projectState(){send("ui/project_state",QString("lanchat=%1").arg(lanchat_?1:0),30000);}
 bool DisplayBridge::navigate(const QString& id,const QString& action){
-    const QStringList allowed={"home","inbox","ppm","link","device","detail","next","previous","read","scroll_down","scroll_up","lang_zh","lang_en","immersion","terminal","audio_test","stop_speech","volume_10","volume_20","volume_30","volume_40","volume_50"};
-    return ready_&&navigation_&&idValid(id)&&allowed.contains(action)&&send("ui/navigation",QString("id=%1;action=%2").arg(id,action),5000);
+    const QStringList allowed={"home","inbox","ppm","link","device","detail","next","previous","read","scroll_down","scroll_up","lang_zh","lang_en","immersion","immersion_dragon","terminal","audio_test","stop_speech","volume_10","volume_20","volume_30","volume_40","volume_50"};
+    return ready_&&navigation_&&(action!="immersion_dragon"||dragon_)&&idValid(id)&&allowed.contains(action)&&send("ui/navigation",QString("id=%1;action=%2").arg(id,action),5000);
 }
 bool DisplayBridge::sendMedia(const QString& topic,const QString& payload,int ttl){
     const QStringList allowed={"ui/assistant_state","ui/audio_start","ui/audio_chunk","ui/audio_cancel"};
@@ -82,11 +82,14 @@ void DisplayBridge::receive(const vr::interconnect::MessageEnvelope& envelope){
         emit audioStatus(object);return;
     }
     if(envelope.topic=="ui/capabilities"){
-        ready_=values.value("version")=="1"&&values.value("text_max").toInt()>=384;navigation_=values.value("navigation")=="1";queries_=values.value("query")=="1";immersion_=values.value("immersion")=="1";pcm_=values.value("pcm")=="16000";projectState();pump();return;
+        ready_=values.value("version")=="1"&&values.value("text_max").toInt()>=384;navigation_=values.value("navigation")=="1";queries_=values.value("query")=="1";immersion_=values.value("immersion")=="1";dragon_=immersion_&&values.value("dragon")=="1";pcm_=values.value("pcm")=="16000";projectState();pump();return;
     }
     if(envelope.topic=="ui/view_state"){
         bool valid=false;const int page=values.value("page").toInt(&valid);
-        if(ready_&&valid&&page>=0&&page<5)view_={{"page",page},{"detail",values.value("detail")=="1"},{"unread",values.value("unread").toInt()},{"count",values.value("count").toInt()},{"language",values.value("language")},{"control",values.value("control")},{"immersion",values.value("immersion")=="1"},{"volume",values.value("volume").toInt()}};
+        if(ready_&&valid&&page>=0&&page<5){
+            view_={{"page",page},{"detail",values.value("detail")=="1"},{"unread",values.value("unread").toInt()},{"count",values.value("count").toInt()},{"language",values.value("language")},{"control",values.value("control")},{"immersion",values.value("immersion")=="1"},{"volume",values.value("volume").toInt()},{"persona",dragon_&&values.value("persona")=="dragon"?"dragon":"whale"}};
+            emit viewChanged();
+        }
         return;
     }
     if(envelope.topic!="ui/message_ack")return;
@@ -97,4 +100,4 @@ void DisplayBridge::receive(const vr::interconnect::MessageEnvelope& envelope){
     else if(state=="rejected"){++rejected_;pending_.remove(id);}
 }
 bool DisplayBridge::requestStatus(const QString& id,const QString& kind){return ready_&&queries_&&idValid(id)&&(kind=="perception"||kind=="link"||kind=="device")&&send("device/query",QString("id=%1;kind=%2").arg(id,kind),5000);}
-QJsonObject DisplayBridge::status()const{return {{"terminal_ready",ready_},{"navigation",navigation_},{"query_supported",queries_},{"immersion_supported",immersion_},{"pcm_supported",pcm_},{"view",view_},{"pending",pending_.size()},{"rendered",static_cast<qint64>(rendered_)},{"rejected",static_cast<qint64>(rejected_)},{"deliveries",deliveries_}};}
+QJsonObject DisplayBridge::status()const{return {{"terminal_ready",ready_},{"navigation",navigation_},{"query_supported",queries_},{"immersion_supported",immersion_},{"dragon_supported",dragon_},{"pcm_supported",pcm_},{"view",view_},{"pending",pending_.size()},{"rendered",static_cast<qint64>(rendered_)},{"rejected",static_cast<qint64>(rejected_)},{"deliveries",deliveries_}};}

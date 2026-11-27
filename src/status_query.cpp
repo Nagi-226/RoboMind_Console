@@ -8,6 +8,8 @@
 #include <limits>
 
 namespace {
+constexpr qint64 kTimeoutMs=5000;
+constexpr qint64 kRetryMs=1000;
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 QString title(const QString& kind){return kind.startsWith("logs")?"日志":kind=="perception"?"感知":kind=="link"?"链路":kind=="device"?"设备":"帮助";}
 bool identifier(const QString& value){static const QRegularExpression expression("^[A-Za-z0-9_.-]{1,63}$");return expression.match(value).hasMatch();}
@@ -33,66 +35,96 @@ StatusQuery::StatusQuery(LanChatSink* sink,DisplayBridge* display,std::function<
     connect(display_,&DisplayBridge::statusReply,this,[this](const QString& payload){receive(payload);});
     timer_.setInterval(100);connect(&timer_,&QTimer::timeout,this,[this]{tick();});timer_.start();
 }
-QString StatusQuery::linkSummary()const{
+QString StatusQuery::linkSummary(const LanChatSink* sender)const{
     const auto state=state_();
     return QString("S3 ↔ Console：%1\nConsole ↔ LanChat：%2\n已接收感知帧：%3；解码失败：%4")
-        .arg(state.value("board_connected").toBool()?"已连接":"离线",state.value("lanchat_state").toString())
+        .arg(state.value("board_connected").toBool()?"已连接":"离线",sender->stateText())
         .arg(state.value("frames").toInteger()).arg(state.value("decode_failures").toInteger());
 }
-void StatusQuery::reply(const QJsonObject& original,const QString& kind,const QString& body){
+void StatusQuery::reply(LanChatSink* sender,const QJsonObject& original,const QString& kind,const QString& body){
     const QString text=QString("[S3 · %1 · #%2]\n%3").arg(title(kind),original.value("msg_id").toVariant().toString(),body);
-    if(sink_->sendReply(original,text))++replied_;
+    if(sender->sendReply(original,text))++replied_;
 }
 bool StatusQuery::recognizes(const QJsonObject& message){return !recognize(message.value("msg").toString(),message.value("type").toInt()==17).isEmpty();}
 void StatusQuery::complete(const Pending& pending,const QString& body){
-    if(pending.completed)pending.completed(body);else reply(pending.original,pending.kind,body);
+    for(const auto& waiter:pending.waiters)waiter(body);
+}
+qsizetype StatusQuery::pendingCount()const{
+    qsizetype count=0;
+    for(const auto& item:pending_)count+=item.waiters.size();
+    return count;
+}
+void StatusQuery::enqueue(const QString& kind,Result completed){
+    // Concurrent questions share the current read, never a cached result from a finished request.
+    for(auto& item:pending_){
+        if(item.kind==kind){item.waiters.append(std::move(completed));return;}
+    }
+    const auto token=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    pending_.insert(token,Pending{kind,now(),0,{std::move(completed)}});
+    tick();
 }
 void StatusQuery::snapshot(const QString& kind,std::function<void(const QString&)> completed){
     if(kind!="perception"&&kind!="link"&&kind!="device"){completed("不支持此状态查询。");return;}
     if(!state_().value("board_connected").toBool()){completed("板端离线，当前快照不可用。");return;}
-    if(pending_.size()>=16){completed("查询繁忙，当前快照不可用。");return;}
-    const QString token=QUuid::createUuid().toString(QUuid::WithoutBraces);
-    pending_.insert(token,Pending{{},kind,now(),0,std::move(completed)});tick();
+    if(pendingCount()>=16){completed("查询繁忙，当前快照不可用。");return;}
+    enqueue(kind,std::move(completed));
 }
-void StatusQuery::consume(const QJsonObject& message){
+void StatusQuery::consume(const QJsonObject& message,LanChatSink* destination){
+    if(!destination)destination=sink_;
     const int type=message.value("type").toInt(),sender=message.value("fromId").toInt();
     if((type!=6&&type!=17)||sender<1||message.value("content_type").toString("text")!="text"||message.contains("attachment"))return;
     const QString id=message.value("msg_id").toVariant().toString();if(!identifier(id))return;
     const QString kind=recognize(message.value("msg").toString(),type==17);if(kind.isEmpty())return;
-    const QString key=QString("%1:%2:%3:%4").arg(type).arg(sender).arg(message.value("groupId").toInt()).arg(id);
+    const QString key=QString("%1:%2:%3:%4:%5").arg(destination->userId()).arg(type).arg(sender).arg(message.value("groupId").toInt()).arg(id);
     if(processed_.contains(key))return;
     const auto timestamp=now();prune(processed_,256,timestamp-600000);processed_.insert(key,timestamp);
     QJsonObject original{{"type",type},{"fromId",sender},{"toId",message.value("toId")},{"groupId",message.value("groupId")},{"msg_id",id}};
-    const QString user=QString::number(sender);prune(users_,128,timestamp-120000);prune(throttled_,128,timestamp-120000);
+    const QString user=QString("%1:%2").arg(destination->userId()).arg(sender);prune(users_,128,timestamp-120000);prune(throttled_,128,timestamp-120000);
     if(users_.contains(user)&&timestamp-users_.value(user)<750){
-        if(timestamp-throttled_.value(user)>750){reply(original,kind,"查询过于频繁，请稍后重试。");throttled_.insert(user,timestamp);}
+        if(timestamp-throttled_.value(user)>750){reply(destination,original,kind,"查询过于频繁，请稍后重试。");throttled_.insert(user,timestamp);}
         return;
     }
     users_.insert(user,timestamp);++requested_;
     if(kind.startsWith("logs")){
         const QString filter=kind=="logs_error"?"error":kind=="logs_link"?"link":kind=="logs_help"?"help":"all";
-        reply(original,kind,logReply_?logReply_(filter):"日志采集未启用，尚无可用缓存。");return;
+        reply(destination,original,kind,logReply_?logReply_(filter):"日志采集未启用，尚无可用缓存。");return;
     }
     if(kind=="help"){
-        reply(original,kind,"私聊：感知 / 链路 / 设备 / 帮助\n群聊：/感知 /链路 /设备 /帮助\n日志：/日志、/日志 错误、/日志 链路、/日志 帮助\n启用 AI 后，私聊可直接自然提问；群聊使用 /AI 问题。\n/AI 清空：清除当前会话的 AI 上下文。只读问答，不执行设备控制。\n原查询文字的板端显示回执与本查询回复分别记录。");return;
+        reply(destination,original,kind,"私聊：感知 / 链路 / 设备 / 帮助\n群聊：/感知 /链路 /设备 /帮助\n日志：/日志、/日志 错误、/日志 链路、/日志 帮助\n启用 AI 后，私聊可直接自然提问；群聊使用 /AI 问题。\n/AI 清空：清除当前会话的 AI 上下文。只读问答，不执行设备控制。\n原查询文字的板端显示回执与本查询回复分别记录。");return;
     }
     const auto state=state_();
-    if(!state.value("board_connected").toBool()){reply(original,kind,(kind=="link"?linkSummary()+"\n":"")+"板端离线，当前快照不可用。");return;}
-    if(pending_.size()>=4){reply(original,kind,"查询繁忙，请稍后重试。");return;}
-    const QString token=QUuid::createUuid().toString(QUuid::WithoutBraces);
-    pending_.insert(token,Pending{original,kind,timestamp,0});tick();
+    if(!state.value("board_connected").toBool()){reply(destination,original,kind,(kind=="link"?linkSummary(destination)+"\n":"")+"板端离线，当前快照不可用。");return;}
+    if(pendingCount()>=4){reply(destination,original,kind,"查询繁忙，请稍后重试。");return;}
+    enqueue(kind,[this,destination,original,kind](const QString& body){
+        reply(destination,original,kind,kind=="link"?linkSummary(destination)+"\n"+body:body);
+    });
 }
 void StatusQuery::tick(){
     const auto timestamp=now();const auto state=state_();
+    const auto displayStatus=display_->status();
     QList<QPair<Pending,QString>> finished;
     for(auto it=pending_.begin();it!=pending_.end();){
         QString error;
         if(!state.value("board_connected").toBool())error="板端离线，查询中断。";
-        else if(timestamp-it->created>=5000){error="查询超时，未收到当前快照。";++timeouts_;}
-        else if(display_->status().value("terminal_ready").toBool()&&!display_->status().value("query_supported").toBool())error="当前板端固件不支持状态查询，请更新固件。";
-        if(!error.isEmpty()){finished.append({it.value(),(it->kind=="link"?linkSummary()+"\n":"")+error});it=pending_.erase(it);continue;}
-        if(timestamp-it->sent>=1000&&display_->requestStatus(it.key(),it->kind))it->sent=timestamp;
+        else if(timestamp-it->created>=kTimeoutMs){error="查询超时，未收到当前快照。";++timeouts_;}
+        else if(displayStatus.value("terminal_ready").toBool()&&!displayStatus.value("query_supported").toBool())error="当前板端固件不支持状态查询，请更新固件。";
+        if(!error.isEmpty()){finished.append({it.value(),error});it=pending_.erase(it);continue;}
         ++it;
+    }
+    // The board has one query slot per TCP receive cycle. Dispatch the next kind
+    // only after the active one replies or its retry window expires.
+    auto active=pending_.find(inFlight_);
+    if(active==pending_.end()||timestamp-active->sent>=kRetryMs){
+        inFlight_.clear();
+        auto next=pending_.end();
+        for(auto it=pending_.begin();it!=pending_.end();++it){
+            if(timestamp-it->sent>=kRetryMs&&(next==pending_.end()||it->sent<next->sent||
+                (it->sent==next->sent&&it->created<next->created)))next=it;
+        }
+        if(next!=pending_.end()&&display_->requestStatus(next.key(),next->kind)){
+            next->sent=timestamp;
+            inFlight_=next.key();
+        }
     }
     for(const auto& item:finished)complete(item.first,item.second);
 }
@@ -107,10 +139,12 @@ void StatusQuery::receive(const QString& payload){
     const auto it=pending_.find(values.value("id"));
     if(it==pending_.end())return;
     if(values.value("version")!="1"||values.value("kind")!=it->kind){++invalid_;return;}
-    if(now()-it->created>=5000){tick();return;}
+    if(now()-it->created>=kTimeoutMs){tick();return;}
     const QString body=format(it->kind,values);
     if(body.isEmpty()){++invalid_;return;}
-    const auto pending=it.value();pending_.erase(it);complete(pending,body);
+    const auto pending=it.value();pending_.erase(it);
+    tick();
+    complete(pending,body);
 }
 QString StatusQuery::format(const QString& kind,const QHash<QString,QString>& v)const{
     bool valid=true;
@@ -144,10 +178,10 @@ QString StatusQuery::format(const QString& kind,const QHash<QString,QString>& v)
         if(!parsed||!signedNumber.match(v.value("rssi")).hasMatch()||rssi<-127||rssi>0)valid=false;
         const QString ip=v.value("ip");if(ip!="unknown"&&QHostAddress(ip).protocol()!=QAbstractSocket::IPv4Protocol)valid=false;
         if(!valid)return {};
-        return QString("%1\nWi-Fi：%2；IP：%3；信号：%4\n板端 VVOS TCP：%5\n板端 TX %6 / RX %7；最近接收 %8 秒前\n板端运行：%9 秒").arg(linkSummary(),wifi?"已连接":"断开",ip,rssi?QString::number(rssi)+" dBm":"未知",tcp?"已连接":"断开").arg(tx).arg(rx).arg(age/1000.0,0,'f',2).arg(up/1000.0,0,'f',1);
+        return QString("Wi-Fi：%1；IP：%2；信号：%3\n板端 VVOS TCP：%4\n板端 TX %5 / RX %6；最近接收 %7 秒前\n板端运行：%8 秒").arg(wifi?"已连接":"断开",ip,rssi?QString::number(rssi)+" dBm":"未知",tcp?"已连接":"断开").arg(tx).arg(rx).arg(age/1000.0,0,'f',2).arg(up/1000.0,0,'f',1);
     }
     const auto heap=number("heap",10000000),largest=number("largest",10000000),minimum=number("minimum",10000000),psram=number("psram",100000000),ppm=number("ppm",1),zao=number("zao",1);
     if(!valid||largest>heap||minimum>heap)return {};
     return QString("运行时间：%1 秒\n内部堆：%2 KiB；最大连续块：%3 KiB\n内部堆历史最低：%4 KiB\nPSRAM 可用：%5 MiB\n模块：LVGL / TCP；PPM %6；ZAO_MINI %7\n启用信息不等同于算法结果有效。").arg(up/1000.0,0,'f',1).arg(heap/1024.0,0,'f',1).arg(largest/1024.0,0,'f',1).arg(minimum/1024.0,0,'f',1).arg(psram/1048576.0,0,'f',2).arg(ppm?"已启用":"未启用",zao?"已接入":"未接入");
 }
-QJsonObject StatusQuery::status()const{return {{"pending",pending_.size()},{"requested",static_cast<qint64>(requested_)},{"replied",static_cast<qint64>(replied_)},{"timeouts",static_cast<qint64>(timeouts_)},{"invalid",static_cast<qint64>(invalid_)}};}
+QJsonObject StatusQuery::status()const{return {{"pending",pendingCount()},{"requested",static_cast<qint64>(requested_)},{"replied",static_cast<qint64>(replied_)},{"timeouts",static_cast<qint64>(timeouts_)},{"invalid",static_cast<qint64>(invalid_)}};}

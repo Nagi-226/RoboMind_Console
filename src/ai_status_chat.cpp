@@ -55,6 +55,17 @@ bool AiStatusChat::Config::valid()const{
         &&url.isValid()&&!host.isEmpty()&&url.userInfo().isEmpty()&&!url.hasQuery()&&!url.hasFragment()
         &&(url.scheme()=="https"||(url.scheme()=="http"&&(host=="127.0.0.1"||host=="localhost"||host=="::1")));
 }
+AiStatusChat::Config AiStatusChat::Config::gptEnvironment(){
+    Config config=environment(); // Share limits, but never credentials, history or daily counters.
+    config.enabled=qgetenv("ROBOMIND_GPT_ENABLED")=="1";
+    config.provider=qEnvironmentVariable("ROBOMIND_GPT_PROVIDER","openai");
+    config.endpoint=qEnvironmentVariable("ROBOMIND_GPT_ENDPOINT");
+    config.model=qEnvironmentVariable("ROBOMIND_GPT_MODEL");
+    config.key=qEnvironmentVariable("ROBOMIND_GPT_KEY");
+    config.reasoningEffort=qEnvironmentVariable("ROBOMIND_GPT_REASONING_EFFORT");
+    config.usageFile=qEnvironmentVariable("ROBOMIND_GPT_USAGE_FILE",config.usageFile+".gpt");
+    return config;
+}
 AiStatusChat::AiStatusChat(LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent)
     :AiStatusChat(Config::environment(),sink,queries,std::move(state),parent){}
 AiStatusChat::AiStatusChat(const Config& config,LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent)
@@ -102,7 +113,7 @@ bool AiStatusChat::consume(const QJsonObject& message){
         .arg(state.value("decode_failures").toInteger()).arg(state.value("bad_headers").toInteger());
     const auto logs=state.value("logs").toObject();context+=QString("USB 日志采集：%1；缓存条数：%2（本轮未提供日志正文）\n").arg(logs.value("state").toString("未启用")).arg(logs.value("count").toInteger());
     jobs_.insert(id,Job{message,conversation,question,context,3,now()});
-    emit questionStarted(id);
+    emit questionStarted(id,type==6);
     for(const QString& kind:{QString("perception"),QString("link"),QString("device")})queries_->snapshot(kind,[this,id,kind](const QString& body){query(id,kind,body);});
     return true;
 }

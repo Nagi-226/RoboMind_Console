@@ -47,11 +47,17 @@ LanChatSink::Config LanChatSink::LoadConfig()
 }
 
 LanChatSink::LanChatSink(const Config& cfg, QObject* parent)
-    : QObject(parent), cfg_(cfg)
+    : LanChatSink(cfg, qEnvironmentVariableIntValue("ROBOMIND_LANCHAT_USER_ID"),
+                  qEnvironmentVariable("ROBOMIND_LANCHAT_PASSWORD"), parent)
 {
-    log_file_.setFileName(QDir::current().absoluteFilePath("lanchat-sink.log"));
+}
+
+LanChatSink::LanChatSink(const Config& cfg, int userId, const QString& password, QObject* parent)
+    : QObject(parent), cfg_(cfg), user_id_(userId), password_(password)
+{
+    log_file_.setFileName(QDir::current().absoluteFilePath(cfg_.logFile));
     if (!log_file_.open(QIODevice::Append | QIODevice::Text)) {
-        qWarning("[lanchat-sink] cannot open lanchat-sink.log, file logging disabled");
+        qWarning("[lanchat-sink] cannot open session log, file logging disabled");
     }
 
     if (!cfg_.enabled) {
@@ -60,10 +66,7 @@ LanChatSink::LanChatSink(const Config& cfg, QObject* parent)
         return;
     }
 
-    bool ok = false;
-    user_id_ = qgetenv("ROBOMIND_LANCHAT_USER_ID").toInt(&ok);
-    password_ = QString::fromUtf8(qgetenv("ROBOMIND_LANCHAT_PASSWORD"));
-    if (!ok || user_id_ < 1 || password_.isEmpty()) {
+    if (user_id_ < 1 || password_.isEmpty()) {
         disabled_ = true;
         SetState("未启用（缺凭据）");
         Log("sink disabled: ROBOMIND_LANCHAT_USER_ID / ROBOMIND_LANCHAT_PASSWORD missing or invalid");
@@ -254,8 +257,8 @@ void LanChatSink::SendFrame(const QJsonObject& body, const QString& log_detail)
     QJsonObject obj = body;
     // timestamp/msg_id 是协议公共字段但非必填（schemas 已确证），防御性带上
     obj.insert("timestamp", NowMs());
-    obj.insert("msg_id", QString("console-%1-%2")
-                             .arg(QCoreApplication::applicationPid()).arg(++msg_counter_));
+    obj.insert("msg_id", QString("console-%1-%2-%3")
+                             .arg(QCoreApplication::applicationPid()).arg(user_id_).arg(++msg_counter_));
     const QByteArray payload = QJsonDocument(obj).toJson(QJsonDocument::Compact);
 
     QByteArray frame;

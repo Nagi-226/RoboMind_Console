@@ -23,6 +23,7 @@ public:
 signals:
     void statusReply(const QString& payload);
     void audioStatus(const QJsonObject& status);
+    void viewChanged();
 private:
     struct Pending {QString id,payload; qint64 created=0,lastSent=0;};
     void pump();
@@ -38,6 +39,7 @@ private:
     bool navigation_=false;
     bool queries_=false;
     bool immersion_=false;
+    bool dragon_=false;
     bool pcm_=false;
     QJsonObject view_;
 };

@@ -12,7 +12,9 @@
 #include <QHash>
 #include <QMainWindow>
 #include <QJsonObject>
+#include <QQueue>
 #include <QString>
+#include <QTimer>
 
 #include "frame_stream.h"
 
@@ -31,6 +33,7 @@ class MainWindow : public QMainWindow {
 
 public:
     explicit MainWindow(quint16 port, QWidget* parent = nullptr, const QString& logDirectory = {});
+    ~MainWindow() override;
     QJsonObject bridgeStatus() const;
     bool navigateBoard(const QString& id,const QString& action);
     void setLogCapture(bool enabled,const QString& port);
@@ -46,17 +49,30 @@ private:
     void ApplyFrame(const QString& text);
     void SetConnState(const QString& text, const QString& color);
     void SetField(const QString& key, const QString& value);
+    void showChatPersona(const QString& persona);
+    void updateChatPresentation();
+    void clearChatPresentation();
 
     quint16       port_;
     QTcpServer*   server_{nullptr};
     QTcpSocket*   client_{nullptr};
     FrameStream   stream_;
     LanChatSink*  sink_{nullptr};
+    LanChatSink*  gptSink_{nullptr};
     DisplayBridge* display_{nullptr};
     StatusQuery* queries_{nullptr};
     BoardLogs* logs_{nullptr};
     AiStatusChat* ai_{nullptr};
+    AiStatusChat* gptAi_{nullptr};
     SpeechBridge* speech_{nullptr};
+
+    struct ChatPresentation {
+        QString persona, control, question, answer;
+        qint64 expires=0,lastSent=0;
+        bool answered=false,success=false;
+    } chatPresentation_;
+    QQueue<QString> recentPrivateMessages_;
+    QTimer chatPresentationTimer_;
 
     QLabel*       conn_label_{nullptr};
     QLabel*       sink_label_{nullptr};

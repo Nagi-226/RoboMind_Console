@@ -21,6 +21,7 @@ public:
         int maxTokens=1200,dailyLimit=100,minIntervalMs=2000,maxConcurrent=4;
         QString usageFile;
         static Config environment();
+        static Config gptEnvironment();
         bool valid() const;
     };
     AiStatusChat(LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent=nullptr);
@@ -28,7 +29,7 @@ public:
     bool consume(const QJsonObject& message);
     QJsonObject status() const;
 signals:
-    void questionStarted(const QString& id);
+    void questionStarted(const QString& id,bool direct);
     void answerReady(const QString& id,const QString& answer,bool success);
 private:
     struct Session { QJsonArray history; qint64 touched=0; };

@@ -40,6 +40,13 @@ def main():
         assert len(config['symbols']) == checkpoint['model']['enc_p.emb.weight'].shape[0]
         speaker = settings['speaker_id']
         assert config['speakers'][speaker] == settings['speaker_name']
+        # Only offer the alternate voice for the pinned multilingual checkpoint.
+        dragon_speaker = 124
+        dragon_available = (
+            settings['model'] == 'models/G_953000.pth'
+            and len(config['speakers']) > dragon_speaker
+            and config['speakers'][dragon_speaker] == '优菈'
+        )
         model = SynthesizerTrn(len(config['symbols']), config['data']['filter_length'] // 2 + 1,
                               config['train']['segment_size'] // config['data']['hop_length'],
                               n_speakers=config['data']['n_speakers'], **config['model'])
@@ -49,7 +56,7 @@ def main():
     symbols = {symbol: i for i, symbol in enumerate(config['symbols'])}
     rate = config['data']['sampling_rate']
     divisor = math.gcd(rate, 16000)
-    print(json.dumps({'event': 'ready'}), flush=True)
+    print(json.dumps({'event': 'ready', 'dragon_voice': dragon_available}), flush=True)
     for line in iter(lambda: sys.stdin.readline(4097), ''):
         identifier = ''
         try:
@@ -57,6 +64,10 @@ def main():
                 raise ValueError('invalid_request')
             request = json.loads(line)
             identifier, text = request['id'], request['text']
+            voice = request.get('voice', 'whale')
+            if voice not in ('whale', 'dragon') or (voice == 'dragon' and not dragon_available):
+                raise ValueError('invalid_voice')
+            selected_speaker = dragon_speaker if voice == 'dragon' else speaker
             if not isinstance(identifier, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}', identifier):
                 raise ValueError('invalid_request')
             if not isinstance(text, str) or not text.strip() or len(text.encode('utf-8')) > 384:
@@ -76,7 +87,7 @@ def main():
                     sequence = padded
                 torch.manual_seed(1234)
                 samples = model.infer(torch.LongTensor(sequence)[None, :], torch.LongTensor([len(sequence)]),
-                                      sid=torch.LongTensor([speaker]), noise_scale=.667,
+                                      sid=torch.LongTensor([selected_speaker]), noise_scale=.667,
                                       noise_scale_w=.8, length_scale=1.0)[0][0, 0].numpy()
                 if not np.isfinite(samples).all() or len(samples) > rate * 40:
                     raise ValueError('invalid_audio')

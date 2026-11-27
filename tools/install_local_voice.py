@@ -101,9 +101,11 @@ def main():
     # Publish the pointer only after successful initialization; old settings survive failure.
     probe = subprocess.run([str(python), '-u', str(worker), '--runtime', str(root)], input='', encoding='utf-8',
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, timeout=60)
-    if probe.returncode or '"ready"' not in probe.stdout:
+    result = next((json.loads(line) for line in probe.stdout.splitlines() if line.startswith('{"event": "ready"')), {})
+    if probe.returncode or result.get('event') != 'ready':
         raise RuntimeError('Model initialization failed; Console configuration unchanged')
-    settings = json.dumps({'python': str(python), 'worker': str(worker), 'runtime': str(root)}, indent=2)
+    settings = json.dumps({'python': str(python), 'worker': str(worker), 'runtime': str(root),
+                           'dragon_voice': result.get('dragon_voice') is True}, indent=2)
     with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=console, suffix='.tmp', delete=False) as stream:
         stream.write(settings)
         pointer = pathlib.Path(stream.name)
