@@ -16,6 +16,7 @@ public:
     void begin(const QString& id);
     void answer(const QString& id,const QString& answer,bool success);
     void cancel();
+    bool busy() const;
     QJsonObject status() const;
 private:
     void synthesize();
@@ -38,7 +39,7 @@ private:
     QTemporaryDir scratch_;
     QTimer timer_;
     QByteArray pcm_;
-    int segment_=0,sent_=0,received_=0,free_=0,chunk_=0,completed_=0;
+    int segment_=0,sent_=0,received_=0,free_=0,chunk_=0,completed_=0,rendered_=0;
     qint64 touched_=0,totalBytes_=0;
     bool startAcknowledged_=false,announced_=false;
 };

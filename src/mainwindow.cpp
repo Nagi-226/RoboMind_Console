@@ -21,6 +21,8 @@
 #include "status_query.h"
 #include "board_logs.h"
 #include "ai_status_chat.h"
+#include "group_discussion.h"
+#include "discussion_playback.h"
 #include "speech_bridge.h"
 #include <QCoreApplication>
 #include <QStandardPaths>
@@ -109,7 +111,17 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
         status_hint_->setText(QString("正在监听 %1，等待板子上报…").arg(port_));
     }
 
-    const auto lanConfig = LanChatSink::LoadConfig();
+    auto lanConfig = LanChatSink::LoadConfig();
+    const auto discussionConfig = GroupDiscussion::Config::load();
+    const int dsId = qEnvironmentVariableIntValue("ROBOMIND_LANCHAT_USER_ID");
+    const int gptId = qEnvironmentVariableIntValue("ROBOMIND_GPT_USER_ID");
+    const auto gptPassword = qEnvironmentVariable("ROBOMIND_GPT_PASSWORD");
+    const auto gptConfig = AiStatusChat::Config::gptEnvironment();
+    const bool hasGpt = gptId > 0 && gptId != dsId && !gptPassword.isEmpty() && gptConfig.enabled && gptConfig.valid();
+    if (hasGpt && lanConfig.receiveMessages && discussionConfig.groupId > 0 &&
+        discussionConfig.groupId != lanConfig.groupId && discussionConfig.hostId > 0 &&
+        discussionConfig.hostId != dsId && discussionConfig.hostId != gptId)
+        lanConfig.discussionGroupId = discussionConfig.groupId;
     sink_ = new LanChatSink(lanConfig, this);
     display_ = new DisplayBridge(this);
     queries_=new StatusQuery(sink_,display_,[this]{return bridgeStatus();},this);
@@ -120,10 +132,7 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
     chatPresentationTimer_.setInterval(200);
     connect(&chatPresentationTimer_,&QTimer::timeout,this,&MainWindow::updateChatPresentation);
     connect(display_,&DisplayBridge::viewChanged,this,&MainWindow::updateChatPresentation);
-    const int gptId = qEnvironmentVariableIntValue("ROBOMIND_GPT_USER_ID");
-    const auto gptPassword = qEnvironmentVariable("ROBOMIND_GPT_PASSWORD");
-    const auto gptConfig = AiStatusChat::Config::gptEnvironment();
-    if (gptId > 0 && gptId != sink_->userId() && !gptPassword.isEmpty() && gptConfig.enabled && gptConfig.valid()) {
+    if (hasGpt) {
         auto privateChat = lanConfig;
         privateChat.target = 0;
         privateChat.groupId = 0;
@@ -135,6 +144,16 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
             state["lanchat_state"]=gptSink_->stateText();
             return state;
         },this);
+    }
+    if (lanConfig.discussionGroupId > 0) {
+        discussion_ = new GroupDiscussion(discussionConfig,sink_,gptSink_,ai_,gptAi_,this);
+        discussionPlayback_ = new DiscussionPlayback(display_,speech_,this);
+        connect(discussion_,&GroupDiscussion::boardLine,this,[this](const QString& request,int turn,const QString& text){
+            discussionPlayback_->enqueue(request,turn,text,!chatPresentation_.control.isEmpty());
+        });
+        connect(discussion_,&GroupDiscussion::boardCancelled,this,[this](const QString& request){
+            discussionPlayback_->cancel("discussion_stopped",request);
+        });
     }
     const auto updateChat = [this] {
         auto label = QString("LanChat: %1").arg(sink_->stateText());
@@ -153,6 +172,7 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
                 if(!id.isEmpty()&&!recentPrivateMessages_.contains(key)){
                     if(recentPrivateMessages_.size()>=256)recentPrivateMessages_.dequeue();
                     recentPrivateMessages_.enqueue(key);
+                    if(discussionPlayback_)discussionPlayback_->cancel("private_chat_active");
                     showChatPersona(persona);
                 }
             }
@@ -160,6 +180,7 @@ MainWindow::MainWindow(quint16 port, QWidget* parent, const QString& logDirector
             if(StatusQuery::recognizes(message))queries_->consume(message,account);else chat->consume(message);
         });
         connect(chat,&AiStatusChat::questionStarted,this,[this,persona](const QString& id,bool direct){
+            if (!direct && discussionPlayback_ && discussionPlayback_->status().value("active").toBool()) return;
             if(!chatPresentation_.control.isEmpty()){
                 if(direct&&chatPresentation_.persona==persona){
                     chatPresentation_.question=id;
@@ -372,6 +393,7 @@ void MainWindow::ApplyFrame(const QString& text)
 
 void MainWindow::OnDisconnected()
 {
+    if(discussionPlayback_)discussionPlayback_->cancel("board_disconnected");
     clearChatPresentation();
     if (client_ != nullptr) {
         client_->deleteLater();
@@ -443,6 +465,8 @@ bool MainWindow::navigateBoard(const QString& id,const QString& action){
          (action=="immersion_dragon"&&view.value("persona").toString()=="dragon"));
     if(action=="stop_speech"||action=="terminal"||action=="audio_test")speech_->cancel();
     const bool accepted=display_->navigate(id,action);
+    if(discussionPlayback_&&((accepted&&!action.startsWith("volume_"))||action=="stop_speech"))
+        discussionPlayback_->cancel("board_control");
     if((accepted&&!action.startsWith("volume_"))||action=="stop_speech")clearChatPresentation();
     if(accepted&&!samePersona&&!action.startsWith("volume_"))speech_->cancel();
     return accepted;
@@ -465,6 +489,8 @@ QJsonObject MainWindow::bridgeStatus() const
             {"gpt_lanchat_state",gptSink_?gptSink_->stateText():QString()},
             {"gpt_account_id",gptSink_?gptSink_->userId():0},
             {"gpt_ai",gptAi_?gptAi_->status():QJsonObject{}},
+            {"discussion",discussion_?discussion_->status():QJsonObject{}},
+            {"discussion_playback",discussionPlayback_?discussionPlayback_->status():QJsonObject{}},
             {"display", display_->status()},
             {"speech",speech_?speech_->status():QJsonObject{}},
             {"logs", logs_ ? logs_->status() : QJsonObject()},

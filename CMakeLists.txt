@@ -93,6 +93,8 @@ add_executable(robomind-console WIN32
     src/status_query.cpp src/status_query.h
     src/board_logs.cpp src/board_logs.h
     src/ai_status_chat.cpp src/ai_status_chat.h
+    src/group_discussion.cpp src/group_discussion.h
+    src/discussion_playback.cpp src/discussion_playback.h
     src/speech_bridge.cpp src/speech_bridge.h
 )
 target_link_libraries(robomind-console PRIVATE

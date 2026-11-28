@@ -78,7 +78,7 @@ void SpeechBridge::begin(const QString& id){
     const auto view=status.value("view").toObject();
     if(!status.value("immersion_supported").toBool()||!view.value("immersion").toBool())return;
     dragonSession_=view.value("persona").toString()=="dragon";
-    id_=id;segment_=completed_=0;totalBytes_=0;lastError_.clear();touched_=now();stage_="thinking";state("thinking");
+    id_=id;segment_=completed_=rendered_=0;totalBytes_=0;lastError_.clear();touched_=now();stage_="thinking";state("thinking");
     if(!status.value("pcm_supported").toBool())fail("板端扬声器尚未就绪");
 }
 void SpeechBridge::answer(const QString& id,const QString& answer,bool success){
@@ -163,7 +163,7 @@ try {
 #endif
 }
 void SpeechBridge::pump(){
-    if(id_.isEmpty()||stage_=="idle"||stage_=="complete"||stage_=="error")return;
+    if(!busy())return;
     const auto info=display_->status();const auto view=info.value("view").toObject();
     if(!info.value("terminal_ready").toBool()||!view.value("immersion").toBool()||dragonSession_!=(view.value("persona").toString()=="dragon")){cancel();return;}
     if(now()-touched_>(stage_=="thinking"?150000:45000)){fail("语音播放或合成超时");return;}
@@ -188,11 +188,13 @@ void SpeechBridge::receive(const QJsonObject& packet){
     touched_=now();received_=received;free_=available;
     if(stage_=="waiting_start"){startAcknowledged_=true;stage_="streaming";}
     if(stage_=="streaming"&&packet.value("done").toBool()&&sent_==pcm_.size()&&packet.value("played").toInteger()==pcm_.size()){
+        if(packet.value("rendered").toBool())++rendered_;
         totalBytes_+=pcm_.size();++completed_;++segment_;sentences_.removeFirst();pcm_.clear();synthesize();
     }
 }
+bool SpeechBridge::busy()const{return !id_.isEmpty()&&stage_!="idle"&&stage_!="complete"&&stage_!="error";}
 QJsonObject SpeechBridge::status()const{
     const bool dragon=display_->status().value("view").toObject().value("persona").toString()=="dragon";
     const bool local=useLocal(dragon);
-    return {{"stage",stage_},{"active_id",id_},{"segment",segment_},{"completed_segments",completed_},{"pcm_bytes",totalBytes_},{"last_error",lastError_},{"voice",local?(dragon?"优菈风格（本地 VITS）":"派蒙风格少女（本地 VITS）"):"Windows zh-CN"},{"provider",local?"local_vits":"windows"},{"local_available",localConfigured_},{"dragon_voice_available",dragonConfigured_},{"synthesis_ms",synthesisMs_}};
+    return {{"stage",stage_},{"active_id",id_},{"segment",segment_},{"completed_segments",completed_},{"rendered_segments",rendered_},{"pcm_bytes",totalBytes_},{"last_error",lastError_},{"voice",local?(dragon?"优菈风格（本地 VITS）":"派蒙风格少女（本地 VITS）"):"Windows zh-CN"},{"provider",local?"local_vits":"windows"},{"local_available",localConfigured_},{"dragon_voice_available",dragonConfigured_},{"synthesis_ms",synthesisMs_}};
 }

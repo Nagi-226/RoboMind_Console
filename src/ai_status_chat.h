@@ -29,13 +29,24 @@ public:
     AiStatusChat(LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent=nullptr);
     AiStatusChat(const Config& config,LanChatSink* sink,StatusQuery* queries,std::function<QJsonObject()> state,QObject* parent=nullptr);
     bool consume(const QJsonObject& message);
+    using DiscussionReply = std::function<void(const QString&,bool)>;
+    void requestDiscussionTurn(const QString& question,const QJsonArray& transcript,DiscussionReply reply);
+    int modelWaitMs() const;
     QJsonObject status() const;
 signals:
     void questionStarted(const QString& id,bool direct);
     void answerReady(const QString& id,const QString& answer,bool success);
 private:
     struct Session { QJsonArray history; qint64 touched=0; };
-    struct Job { QJsonObject original; QString conversation,question,context; int remaining=3; qint64 created=0; };
+    struct Job {
+        QJsonObject original;
+        QString conversation,question,context;
+        int remaining=3;
+        qint64 created=0;
+        DiscussionReply discussionReply;
+        bool discussionFollowUp=false;
+    };
+    QString reserveCall(const QString& conversation={});
     void query(const QString& id,const QString& kind,const QString& body);
     void invoke(const QString& id);
     void finish(const QString& id,const QString& answer,bool success);

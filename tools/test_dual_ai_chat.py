@@ -41,6 +41,16 @@ def run(server_exe, console_exe):
     events = []
     hold_ds = threading.Event()
     release_ds = threading.Event()
+    hold_group = threading.Event()
+    release_group = threading.Event()
+    hold_question_audio = threading.Event()
+    question_audio_received = queue.Queue()
+    group_question = "群讨论题：雨衣还是雨伞？"
+    group_answers = (
+        "风大就穿雨衣，腾得出手。",
+        "小鲸鱼，风大确实用雨衣。无风短途可以带伞。",
+        "前辈这个短途建议好。风大穿雨衣，无风短途就带伞。",
+    )
 
     class Model(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -49,11 +59,20 @@ def run(server_exe, console_exe):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.put((self.path, self.headers.get("Authorization"), body))
-            if body["messages"][-1]["content"] == "DS 慢回复":
+            prompt = body["messages"][-1]["content"]
+            answer = body["model"] + " verified"
+            if prompt == "DS 慢回复":
                 hold_ds.set()
                 release_ds.wait(10)
+            if prompt.startswith('{"earlier_turns":'):
+                group = json.loads(prompt)
+                turn = len(group["earlier_turns"])
+                if turn == 0:
+                    hold_group.set()
+                    release_group.wait(10)
+                answer = group_answers[turn]
             response = json.dumps({
-                "choices": [{"message": {"content": body["model"] + " verified"}}]
+                "choices": [{"message": {"content": answer}}]
             }).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(response)))
@@ -70,7 +89,7 @@ def run(server_exe, console_exe):
         threading.Thread(target=model.serve_forever, daemon=True).start()
         server = subprocess.Popen([server_exe, "--port", str(lan_port), "--data", str(folder / "data")],
                                   cwd=folder, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        console, board, user = None, None, None
+        console, board, user, outsider = None, None, None, None
 
         def snapshot():
             try:
@@ -88,7 +107,7 @@ def run(server_exe, console_exe):
                     return False
             wait(available)
             ids = {}
-            for nick in ("Tester", "RoboMind-S3_DS", "RoboMind-S3_GPT"):
+            for nick in ("Tester", "RoboMind-S3_DS", "RoboMind-S3_GPT", "Outsider"):
                 with socket_peer(lan_port) as peer:
                     peer.send(type=0, nickname=nick, password="isolated-test-password")
                     res = peer.wait(1)
@@ -101,6 +120,13 @@ def run(server_exe, console_exe):
             ds, gpt = ids["RoboMind-S3_DS"], ids["RoboMind-S3_GPT"]
             user = Peer(lan_port)
             sender = user.login("Tester")["id"]
+            user.send(type=9, hostId=sender, name="Discussion fixture")
+            group = user.wait(10, status="ok")["groupId"]
+            user.send(type=9, hostId=sender, name="Other group")
+            other_group = user.wait(10, status="ok")["groupId"]
+            (folder / "robomind-discussion.ini").write_text(
+                f"[discussion]\ngroup_id={group}\nhost_id={sender}\n"
+            )
             (folder / "robomind-console.ini").write_text(
                 f"[lanchat]\nenabled=true\nhost=127.0.0.1\nport={lan_port}\nreceive_messages=true\n"
             )
@@ -154,7 +180,7 @@ def run(server_exe, console_exe):
 
                 def audio_status(id, segment, size, done):
                     send_board("ui/audio_status", f"id={id};segment={segment};received={size};"
-                               f"free=65536;done={int(done)};played={size if done else 0}")
+                               f"free=65536;done={int(done)};played={size if done else 0};rendered={int(done)}")
 
                 def read_board():
                     parts = receive(board).decode().split("|")
@@ -165,13 +191,17 @@ def run(server_exe, console_exe):
                     if topic in ("ui/navigation", "ui/assistant_state", "ui/audio_start", "ui/audio_cancel"):
                         events.append((topic, values))
                     if topic == "ui/audio_start":
-                        active_audio[values["id"]] = (int(values["bytes"]), 0)
+                        hold = hold_question_audio.is_set() and values["text"].startswith("群主提问")
+                        active_audio[values["id"]] = (int(values["bytes"]), 0, hold)
                         audio_status(values["id"], values["seq"], 0, False)
                     if topic == "ui/audio_chunk":
-                        expected, received = active_audio[values["id"]]
+                        expected, received, hold = active_audio[values["id"]]
                         received += len(base64.b64decode(values["data"]))
-                        active_audio[values["id"]] = (expected, received)
-                        audio_status(values["id"], values["segment"], received, received == expected)
+                        active_audio[values["id"]] = (expected, received, hold)
+                        done = received == expected
+                        audio_status(values["id"], values["segment"], received, done and not hold)
+                        if done and hold:
+                            question_audio_received.put((values["id"], values["segment"], received))
                     return values if topic == "device/query" else None
 
                 try:
@@ -301,15 +331,95 @@ def run(server_exe, console_exe):
             wait(lambda: snapshot().get("display", {}).get("view", {}).get("control") == whale)
             assert snapshot()["display"]["view"]["persona"] == "whale"
             print("PASS: private chat switches both personas; early answers wait for view ACK; stale replies stay in PC chat")
+
+            assert {calls.get_nowait()[2]["messages"][-1]["content"] for _ in range(2)} == {"DS 慢回复", "GPT 快回复"}
+
+            def roster():
+                user.send(type=60, groupId=group)
+                return {member["id"] for member in user.wait(61, groupId=group)["users"]}
+
+            def group_send(peer, uid, gid, text):
+                peer.send(type=16, fromId=uid, groupId=gid, msg=text)
+                return peer.wait(17, fromId=uid, groupId=gid, msg=text)["msg_id"]
+
+            outsider = Peer(lan_port)
+            outsider_id = outsider.login("Outsider")["id"]
+            outsider.send(type=13, id=outsider_id, groupId=group)
+            outsider.wait(14, groupId=group, status="ok")
+            assert roster() == {sender, ds, gpt, outsider_id}
+            group_send(outsider, outsider_id, group, "/讨论 不是群主")
+            group_send(user, sender, group, "/讨论 多一个成员")
+            wait(lambda: snapshot().get("discussion", {}).get("last_result") == "roster_mismatch")
+            assert calls.empty()
+            outsider.send(type=15, id=outsider_id, groupId=group)
+            outsider.wait(19, groupId=group, status="ok")
+            assert roster() == {sender, ds, gpt}
+            start_events, start_queries = len(events), len(queries)
+            start_board_messages = snapshot()["display"]["deliveries"]
+            group_send(user, sender, other_group, "/讨论 不在指定群")
+            group_send(user, sender, group, "普通群消息")
+            hold_question_audio.set()
+            request = group_send(user, sender, group, f"/讨论 {group_question}")
+            assert hold_group.wait(4)
+            question_id, question_segment, question_bytes = question_audio_received.get(timeout=6)
+            assert event(start_events, "ui/audio_start", id=question_id)["text"].replace("\n", "") == "群主提问：" + group_question
+            group_send(user, sender, group, "/讨论 并发触发应被忽略")
+            release_group.set()
+            for turn, (speaker, answer) in enumerate(zip((ds, gpt, ds), group_answers), 1):
+                received = user.wait(17, fromId=speaker, groupId=group)
+                assert received["msg"] == f"[讨论 {turn}/3 · #{request}]\n{answer}", received
+
+            wait(lambda: snapshot().get("discussion", {}).get("last_result") == "completed")
+            transcript = []
+            for role, model_name, answer, address in zip(
+                ("DS", "GPT", "DS"), ("ds", "gpt", "ds"), group_answers, ("白龙前辈", "小鲸鱼", "前辈")
+            ):
+                route, key, body = calls.get_nowait()
+                assert route == f"/{model_name}/v1/chat/completions" and key == f"Bearer {model_name}-fixture-key"
+                system, prompt = body["messages"]
+                assert address in system["content"] and "-46 dBm" not in system["content"]
+                assert json.loads(prompt["content"]) == {"question": group_question, "earlier_turns": transcript}
+                transcript.append({"speaker": role, "text": answer})
+            assert calls.empty()
+            assert [v["id"] for topic, v in events[start_events:] if topic == "ui/audio_start"] == [question_id]
+            assert not any(topic == "ui/navigation" for topic, _ in events[start_events:])
+            hold_question_audio.clear()
+            send_board("ui/audio_status", f"id={question_id};segment={question_segment};received={question_bytes};"
+                       f"free=65536;done=1;played={question_bytes};rendered=1")
+            wait(lambda: event_index(events, start_events, "ui/audio_start", group_answers[0]) is not None)
+            dragon = event(start_events, "ui/navigation", action="immersion_dragon")["id"]
+            show("dragon", "wrong-group-ack")
+            wait(lambda: snapshot()["display"]["view"].get("control") == "wrong-group-ack")
+            assert event_index(events, start_events, "ui/audio_start", group_answers[1]) is None
+            show("dragon", dragon)
+            gpt_audio = wait(lambda: event_index(events, start_events, "ui/audio_start", group_answers[1]))
+            whale = event(gpt_audio + 1, "ui/navigation", action="immersion")["id"]
+            show("whale", whale)
+            wait(lambda: event_index(events, gpt_audio + 1, "ui/audio_start", group_answers[2]))
+            playback = wait(lambda: (value if (value := snapshot().get("discussion_playback", {})).get("state") == "completed" else None))
+            assert playback["request_id"] == request
+            assert [(r["turn"], r["persona"], r["segments"], r["rendered_segments"]) for r in playback["receipts"]] == [
+                (0, "whale", 1, 1), (1, "whale", 1, 1), (2, "dragon", 1, 1), (3, "whale", 1, 1),
+            ]
+            assert trace.read_text().splitlines() == ["dragon", "whale", "whale", "dragon", "whale"]
+            assert len(queries) == start_queries
+            assert snapshot()["display"]["deliveries"] == start_board_messages
+            assert json.loads((folder / "ds.json").read_text())["calls"] == 4
+            assert json.loads((folder / "gpt.json").read_text())["calls"] == 4
+            print("PASS: exact roster, host only, three model turns; question and replies play serially with verified role and subtitle receipts")
+
             # Production updates can stop Console while the board and voice worker are still connected.
             stop.write_text("stop")
             assert console.wait(timeout=6) == 0
         finally:
             release_ds.set()
+            release_group.set()
             if board:
                 board.close()
             if user:
                 user.close()
+            if outsider:
+                outsider.close()
             if console and console.poll() is None:
                 stop.write_text("stop")
                 try:
@@ -332,6 +442,11 @@ class socket_peer:
 
     def __exit__(self, *_):
         self.peer.close()
+
+
+def event_index(events, start, topic, text):
+    return next((i for i, (name, values) in enumerate(events[start:], start)
+                 if name == topic and values.get("text", "").replace("\n", "") == text), None)
 
 
 if __name__ == "__main__":

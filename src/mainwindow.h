@@ -26,6 +26,8 @@ class DisplayBridge;
 class StatusQuery;
 class BoardLogs;
 class AiStatusChat;
+class GroupDiscussion;
+class DiscussionPlayback;
 class SpeechBridge;
 
 class MainWindow : public QMainWindow {
@@ -64,6 +66,8 @@ private:
     BoardLogs* logs_{nullptr};
     AiStatusChat* ai_{nullptr};
     AiStatusChat* gptAi_{nullptr};
+    GroupDiscussion* discussion_{nullptr};
+    DiscussionPlayback* discussionPlayback_{nullptr};
     SpeechBridge* speech_{nullptr};
 
     struct ChatPresentation {

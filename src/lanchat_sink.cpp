@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
@@ -179,6 +180,13 @@ void LanChatSink::OnReadyRead()
             if (cfg_.receiveMessages && cfg_.groupId > 0) {
                 SendFrame(QJsonObject{{"type", 13}, {"id", user_id_}, {"groupId", cfg_.groupId}}, "join configured display group");
             }
+            if (cfg_.discussionGroupId > 0) {
+                bool member = false;
+                for (const auto& group : doc.object().value("groups").toArray())
+                    if (group.toObject().value("groupId").toInt() == cfg_.discussionGroupId) member = true;
+                if (!member) SendFrame({{"type", 13}, {"id", user_id_}, {"groupId", cfg_.discussionGroupId}},
+                                       "join configured discussion group");
+            }
         } else if (type == 4) {
             // 凭据被拒是配置错误而非网络故障，重试无意义，停用等人工处理
             disabled_ = true;
@@ -188,6 +196,18 @@ void LanChatSink::OnReadyRead()
             Log("rx LoginFailedReturn (type=4): credentials rejected, sink disabled (no retry)");
             socket_->disconnectFromHost();
         }
+        const auto message = doc.object();
+        const int groupId = message.value("groupId").toInt();
+        if (login_confirmed_ && cfg_.discussionGroupId > 0) {
+            if ((type == 61 && (groupId == cfg_.discussionGroupId || groupId == 0)) ||
+                ((type == 18 || type == 19) && groupId == cfg_.discussionGroupId))
+                emit discussionGroupEvent(message);
+            if (type == 17 && groupId == cfg_.discussionGroupId) {
+                if (message.value("content_type").toString("text") == "text" && !message.contains("attachment"))
+                    emit discussionMessageReceived(message);
+                continue;
+            }
+        }
         if (cfg_.receiveMessages && doc.object().value("content_type").toString("text") == "text"
             && !doc.object().contains("attachment") && doc.object().value("fromId").toInt() != user_id_) {
             if (type == 6 && doc.object().value("toId").toInt() == user_id_)
@@ -196,6 +216,22 @@ void LanChatSink::OnReadyRead()
                 emit messageReceived(doc.object());
         }
     }
+}
+
+bool LanChatSink::requestDiscussionMembers()
+{
+    if (!online() || socket_->state() != QAbstractSocket::ConnectedState || cfg_.discussionGroupId < 1) return false;
+    SendFrame({{"type", 60}, {"groupId", cfg_.discussionGroupId}}, "request discussion group membership");
+    return true;
+}
+
+bool LanChatSink::sendDiscussionReply(const QString& text)
+{
+    if (!online() || socket_->state() != QAbstractSocket::ConnectedState || socket_->bytesToWrite() > 65536 ||
+        cfg_.discussionGroupId < 1 || text.isEmpty() || text.toUtf8().size() > 8192) return false;
+    SendFrame({{"type", 16}, {"fromId", user_id_}, {"groupId", cfg_.discussionGroupId},
+               {"msg", text}, {"content_type", "text"}}, "discussion reply (content omitted)");
+    return true;
 }
 
 void LanChatSink::SendHeartbeat()

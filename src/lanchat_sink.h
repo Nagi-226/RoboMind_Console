@@ -30,6 +30,7 @@ public:
         quint16 port{9001};
         int     target{0};    // 私聊：接收者数字用户 id
         int     groupId{0};   // 群发：群 id。0 = 不发群
+        int     discussionGroupId{0};
         bool    receiveMessages{false}; // ReceiveMsg -> VVOS display; default preserves send-only configs.
         QString logFile{"lanchat-sink.log"};
     };
@@ -43,6 +44,8 @@ public:
     // 同一 summary 30 秒内不重复发。未登录时丢弃（不占去抖窗口，恢复后可补发）。
     void sendAlert(int level, const QString& summary);
     bool sendReply(const QJsonObject& original,const QString& text);
+    bool sendDiscussionReply(const QString& text);
+    bool requestDiscussionMembers();
 
     QString stateText() const { return state_; }
     bool online() const { return login_confirmed_; }
@@ -51,6 +54,8 @@ public:
 signals:
     void stateChanged(const QString& text);
     void messageReceived(const QJsonObject& message);
+    void discussionMessageReceived(const QJsonObject& message);
+    void discussionGroupEvent(const QJsonObject& event);
 
 private:
     void ConnectToServer();
