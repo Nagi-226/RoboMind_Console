@@ -4,7 +4,7 @@
 
 这是个人独立项目中的配套工具。感知决策由 PPM 承担；Console 负责通信、展示和操作。
 
-> 当前状态：2026-11-27。DS、GPT 可用独立 LanChat 账号同时登录，共用一条 S3 连接并分别回答真实状态。向其中一个账号发出私聊文字后，屏幕自动切到对应角色，字幕和语音等待板端确认。源码支持此功能；完整 LanChat 安装包仍为 2026.11.23.2。
+> 当前状态：2026-11-28。DS、GPT 可同时登录，分别使用鲸鱼女仆和白龙前辈的长期人设，共用一台 S3 的实时状态。发送私聊文字后，板端切到对应角色并显示字幕、播放语音。GPT 人设已通过真实状态问答和板端播报复测；DS 的口吻已接入，实板效果待抽查。完整 LanChat 安装包仍为 2026.11.23.2。
 
 ## 当前功能
 
@@ -40,6 +40,8 @@ flowchart LR
 - S3 `rendered` 代表可见预览或详情完成 LVGL / LCD DMA 刷新，独立于人类阅读回执。
 
 配套仓库：[RoboMind-S3](https://github.com/Nagi-226/RoboMind-S3)、[LanChat-Next](https://github.com/Nagi-226/LanChat-Next)、[Virtual-Vehicle-OS](https://github.com/Nagi-226/Virtual-Vehicle-OS)、[PPM](https://github.com/Nagi-226/PPM)。
+
+两个账号的人设随 Console 发送到各自的模型请求，每轮自动生效：DS 是爱吃白饭的鲸鱼女仆，GPT 是从容自信的白龙前辈。设备事实仍以本轮快照为准。详见[配置与性格说明](docs/ai-status-chat.md#长期对话性格)。
 
 ## 使用方式
 

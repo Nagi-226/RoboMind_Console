@@ -224,7 +224,16 @@ def run(server_exe, console_exe):
                 path, key, body = asked[f"{name}-fixture"]
                 assert path == f"/{name}/v1/chat/completions" and key == f"Bearer {name}-fixture-key"
                 system, prompt = body["messages"]
-                assert "-46 dBm" in system["content"] and "PSRAM 可用" in system["content"]
+                assert system["role"] == "system"
+                instructions = system["content"]
+                assert "-46 dBm" in instructions and "PSRAM 可用" in instructions
+                assert "本轮提供的实时快照" in instructions and "不能声称看到了" in instructions
+                if to == ds:
+                    assert all(cue in instructions for cue in ("DeepSeek娘", "白米饭", "是哺乳动物", "鱼片"))
+                    assert "GPT娘（白龙娘）" not in instructions
+                else:
+                    assert all(cue in instructions for cue in ("GPT娘（白龙娘）", "远古智慧龙族", "闪亮", "前辈"))
+                    assert "DeepSeek娘（蓝色大肥鱼）" not in instructions
                 assert prompt["content"] == first[to]
             assert Counter(queries) == {"link": 1, "perception": 1, "device": 1}, queries
 
@@ -235,6 +244,8 @@ def run(server_exe, console_exe):
             assert "gpt-fixture verified" in answer, answer
             body = calls.get_nowait()[2]
             assert [m["content"] for m in body["messages"] if m["role"] == "user"] == [first[gpt], "GPT 追问"]
+            assert "GPT娘（白龙娘）" in body["messages"][0]["content"]
+            assert "DeepSeek娘（蓝色大肥鱼）" not in body["messages"][0]["content"]
             wait(lambda: snapshot().get("gpt_ai", {}).get("replied") == 2)
             assert snapshot()["ai"]["replied"] == 1 and snapshot()["queries"]["timeouts"] == 0
             assert not overlaps, overlaps

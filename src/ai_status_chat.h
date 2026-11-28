@@ -14,7 +14,9 @@ class QNetworkReply;
 class AiStatusChat : public QObject {
     Q_OBJECT
 public:
+    enum class Persona { Whale, Dragon };
     struct Config {
+        Persona persona=Persona::Whale;
         bool enabled=false;
         QString provider="anthropic",endpoint,model,key,reasoningEffort;
         int timeoutMs=45000;

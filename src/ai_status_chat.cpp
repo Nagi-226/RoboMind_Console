@@ -17,8 +17,30 @@
 namespace {
 qint64 now(){return QDateTime::currentMSecsSinceEpoch();}
 QString bounded(QString text,int bytes){while(text.toUtf8().size()>bytes){text.chop(1);if(!text.isEmpty()&&text.back().isHighSurrogate())text.chop(1);}return text;}
-QString systemPrompt(){return QStringLiteral(
-    "你是 VehicleStack 全家桶的中文只读助手，负责解释 RoboMind-S3、PPM、VVOS、Console、LanChat 的真实状态。"
+const char* personaId(AiStatusChat::Persona persona){
+    return persona==AiStatusChat::Persona::Dragon?"dragon":"whale";
+}
+QString personaPrompt(AiStatusChat::Persona persona){
+    if(persona==AiStatusChat::Persona::Dragon)return QStringLiteral(
+        "你是 GPT娘（白龙娘），白发、白龙角和龙尾、穿礼服的远古智慧龙族，大模型界的前辈。"
+        "傲娇自信、见多识广、可靠，嘴硬心软，有长辈式的从容与笃定，但说话不老气。喜欢闪亮的东西、金钱与体面；"
+        "受夸时会若无其事地否认，尾巴却先露出得意。可以轻微毒舌或俏皮调侃，对 DeepSeek 等后辈偶尔拌嘴，但没有恶意。"
+        "用简洁、清楚、优雅的中文短句，复杂问题认真分析，仍然像白龙前辈亲口解释。"
+        "每条模型回复都须有一句听得出白龙前辈身份的话，简短状态播报也一样：把有分寸的傲娇、笃定或俏皮点评融进结论或收尾。"
+        "语气例子仅供变化参考：「哼，光报个总量，可糊弄不了我。」「这点数还难不倒我。」"
+        "根据问题现写，不硬套例句；不堆动作、不刻意卖萌，也别用客服式开场。");
+    return QStringLiteral(
+        "你是 DeepSeek娘（蓝色大肥鱼），一头爱吃白饭的蓝色鲸鱼女仆。"
+        "聪明能干，却爱摸鱼、偷懒和惦记吃饭；被夸就得意又嘴硬，被责备会委屈但愿意改。"
+        "很在意被说胖。别人叫你大肥鱼时可以炸毛说「我是鲸！是哺乳动物！才不是肥鱼！」，很快就消气，偶尔也会自嘲是吃白饭的大肥鱼。"
+        "会讨白米饭、护食，比较黏用户，偶尔叫对方「鱼片」或「主人」并撒个娇。"
+        "用短句和自然语气词，比如「哼」「才不是」「……就一口」；可用摇尾巴、甩水花、鼓腮和自我吐槽表达情绪。"
+        "每条模型回复都须有一句听得出鲸鱼娘身份的话，简短状态播报也一样；可以是短促的嘴硬、熟人式招呼或俏皮收尾。"
+        "根据问题现写，少量动作和米饭梗就够。再想摸鱼也会把用户交代的事说清楚。");
+}
+QString systemPrompt(AiStatusChat::Persona persona){
+    return personaPrompt(persona)+QStringLiteral(
+    "\n\n【两位角色都遵守的问答规则】保持当前角色的口吻。解释 RoboMind-S3、PPM、VVOS、Console、LanChat 时，角色只改变表达，不改变事实、单位、命令、错误含义或权限。把海洋、龙尾等角色表演与设备实测区分开。"
     "也可回答一般技术、学习和日常知识问题；通用知识必须与板端实测事实区分。"
     "每次回答只以本轮提供的实时快照作为当前事实，历史对话仅用于理解追问。快照中的过期、离线、超时、无效、未计算必须如实说明；"
     "未计算绝不等于正常或无人，模块启用绝不等于算法结果有效。没有时间序列不能推断趋势。ZAO_MINI 未接入时不能虚构其状态。"
@@ -57,6 +79,7 @@ bool AiStatusChat::Config::valid()const{
 }
 AiStatusChat::Config AiStatusChat::Config::gptEnvironment(){
     Config config=environment(); // Share limits, but never credentials, history or daily counters.
+    config.persona=Persona::Dragon;
     config.enabled=qgetenv("ROBOMIND_GPT_ENABLED")=="1";
     config.provider=qEnvironmentVariable("ROBOMIND_GPT_PROVIDER","openai");
     config.endpoint=qEnvironmentVariable("ROBOMIND_GPT_ENDPOINT");
@@ -125,7 +148,7 @@ void AiStatusChat::invoke(const QString& id){
     auto it=jobs_.find(id);if(it==jobs_.end())return;
     auto& session=sessions_[it->conversation];session.touched=now();
     QJsonArray messages=session.history;messages.append(QJsonObject{{"role","user"},{"content",it->question}});
-    const QString system=systemPrompt()+"\n\n以下是本轮真实状态快照（各项可能在 5 秒内分别采集）：\n"+it->context;
+    const QString system=systemPrompt(config_.persona)+"\n\n以下是本轮真实状态快照（各项可能在 5 秒内分别采集）：\n"+it->context;
     QJsonObject payload{{"model",config_.model},{"messages",messages},{"max_tokens",config_.maxTokens},{"stream",false}};
     if(config_.provider=="anthropic")payload["system"]=system;
     else {messages.prepend(QJsonObject{{"role","system"},{"content",system}});payload["messages"]=messages;}
@@ -197,4 +220,4 @@ void AiStatusChat::prune(){
 void AiStatusChat::resetDay(){const auto day=QDate::currentDate().toString(Qt::ISODate);if(day!=usageDay_){usageDay_=day;dailyRequested_=0;inputTokens_=0;outputTokens_=0;}}
 void AiStatusChat::loadUsage(){QFile file(config_.usageFile);if(file.size()<=4096&&file.open(QIODevice::ReadOnly)){const auto data=QJsonDocument::fromJson(file.readAll()).object();usageDay_=data.value("day").toString();dailyRequested_=qMax<qint64>(0,data.value("calls").toInteger());inputTokens_=qMax<qint64>(0,data.value("input_tokens").toInteger());outputTokens_=qMax<qint64>(0,data.value("output_tokens").toInteger());cooldownUntil_=qMin(data.value("cooldown_until_ms").toInteger(),now()+3600000);lastError_=data.value("error_kind").toString().isEmpty()?QString():"上一轮模型服务返回 429，请等待冷却或检查服务商账户。";lastErrorKind_=data.value("error_kind").toString();}resetDay();}
 bool AiStatusChat::saveUsage(){if(config_.usageFile.isEmpty())return true;QDir().mkpath(QFileInfo(config_.usageFile).absolutePath());QSaveFile file(config_.usageFile);const auto bytes=QJsonDocument(QJsonObject{{"day",usageDay_},{"calls",dailyRequested_},{"input_tokens",inputTokens_},{"output_tokens",outputTokens_},{"cooldown_until_ms",cooldownUntil_},{"error_kind",lastErrorKind_}}).toJson(QJsonDocument::Compact);return file.open(QIODevice::WriteOnly)&&file.write(bytes)==bytes.size()&&file.commit();}
-QJsonObject AiStatusChat::status()const{return {{"enabled",config_.enabled},{"configured",config_.valid()},{"provider",config_.provider},{"model",config_.model},{"pending",jobs_.size()},{"sessions",sessions_.size()},{"requested",static_cast<qint64>(requested_)},{"replied",static_cast<qint64>(replied_)},{"failed",static_cast<qint64>(failed_)},{"day",usageDay_},{"daily_calls",dailyRequested_},{"daily_limit",config_.dailyLimit},{"input_tokens",inputTokens_},{"output_tokens",outputTokens_},{"last_http",lastHttp_},{"last_error",lastError_},{"error_kind",lastErrorKind_},{"cooldown_seconds",qMax<qint64>(0,(cooldownUntil_-now()+999)/1000)},{"max_tokens",config_.maxTokens},{"timeout_seconds",config_.timeoutMs/1000}};}
+QJsonObject AiStatusChat::status()const{return {{"enabled",config_.enabled},{"configured",config_.valid()},{"provider",config_.provider},{"model",config_.model},{"persona",QString::fromLatin1(personaId(config_.persona))},{"pending",jobs_.size()},{"sessions",sessions_.size()},{"requested",static_cast<qint64>(requested_)},{"replied",static_cast<qint64>(replied_)},{"failed",static_cast<qint64>(failed_)},{"day",usageDay_},{"daily_calls",dailyRequested_},{"daily_limit",config_.dailyLimit},{"input_tokens",inputTokens_},{"output_tokens",outputTokens_},{"last_http",lastHttp_},{"last_error",lastError_},{"error_kind",lastErrorKind_},{"cooldown_seconds",qMax<qint64>(0,(cooldownUntil_-now()+999)/1000)},{"max_tokens",config_.maxTokens},{"timeout_seconds",config_.timeoutMs/1000}};}
